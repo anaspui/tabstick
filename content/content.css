@@ -1,5 +1,18 @@
 /* TabStick — Content Script Styles (host page level) */
 
+/* Host element isolation against page CSS bleed and accidental backdrop roots */
+tabstick-note.ts-host {
+  background: transparent !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border-image: none !important;
+  filter: none !important;
+  clip-path: none !important;
+  mask: none !important;
+  isolation: auto !important;
+  box-sizing: border-box !important;
+}
+
 /* Cursor override during drag */
 body.ts-dragging,
 body.ts-dragging * {

@@ -1,9 +1,11 @@
 /**
  * NoteRenderer — Shadow DOM construction for sticky notes.
  * Builds complete note HTML with SVG grain filter, header, title input,
- * body (textarea + checklist), timestamps, footer, resize handle.
+ * body (textarea + checklist), timestamps, resize handle, and liquid glass mode.
  */
-const NoteRenderer = (function() {
+var NoteRenderer = (globalThis.NoteRenderer && globalThis.NoteRenderer.__tabstick) ? globalThis.NoteRenderer : (function() {
+  const Z_INDEX_BASE = 2147400000;
+
   // SVG icons
   const CHECKLIST_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"></polyline><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path></svg>`;
   const EYE_OPEN_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>`;
@@ -20,6 +22,32 @@ const NoteRenderer = (function() {
           font-size: initial; line-height: initial; letter-spacing: initial;
           text-transform: none; text-decoration: none; text-align: left;
           display: block;
+          border-radius: 10px;
+          overflow: hidden;
+          border: none;
+          box-shadow:
+            0 1px 2px rgba(0,0,0,0.07),
+            0 4px 8px rgba(0,0,0,0.10),
+            0 12px 24px rgba(0,0,0,0.08),
+            0 1px 0 rgba(255,255,255,0.55) inset;
+          transition: box-shadow 200ms ease, transform 200ms ease;
+        }
+        :host(.ts-focused) {
+          box-shadow:
+            0 2px 4px rgba(0,0,0,0.10),
+            0 8px 16px rgba(0,0,0,0.15),
+            0 20px 40px rgba(0,0,0,0.10),
+            0 1px 0 rgba(255,255,255,0.55) inset;
+        }
+        :host(.ts-lifting) {
+          transition: box-shadow 120ms ease, transform 120ms ease;
+          box-shadow:
+            0 4px 8px rgba(0,0,0,0.12),
+            0 16px 32px rgba(0,0,0,0.18),
+            0 32px 64px rgba(0,0,0,0.12);
+        }
+        @media (prefers-reduced-motion: reduce) {
+          :host, :host(.ts-lifting) { transition: none; }
         }
 
         .ts-note {
@@ -82,6 +110,7 @@ const NoteRenderer = (function() {
           flex-shrink: 0; padding: 0;
         }
         .ts-btn:hover { opacity: 1; background: rgba(0,0,0,0.12); }
+        .ts-btn.ts-active { opacity: 1; background: rgba(0,0,0,0.18); }
         .ts-btn:focus-visible { outline: 2px solid #fff; outline-offset: 1px; opacity: 1; }
         .ts-btn svg { width: 14px; height: 14px; }
 
@@ -113,7 +142,8 @@ const NoteRenderer = (function() {
           flex-shrink: 0;
           transition: color 250ms ease;
         }
-        .ts-title-input::placeholder { color: var(--ts-body-text); opacity: 0.3; }
+        .ts-title-input::placeholder { color: var(--ts-body-text); opacity: 0.35; }
+        .ts-title-input[readonly] { opacity: 0.85; cursor: default; }
 
         /* ── Content area ── */
         .ts-body-content {
@@ -156,6 +186,7 @@ const NoteRenderer = (function() {
           width: 18px; height: 18px; cursor: pointer; margin-top: 6px;
           accent-color: var(--ts-header-bg);
         }
+        .ts-checklist-item input[type="checkbox"]:disabled { cursor: default; opacity: 0.7; }
         .ts-checklist-text {
           flex: 1; background: transparent; border: none; outline: none;
           font-family: inherit; font-size: inherit; color: inherit;
@@ -172,17 +203,20 @@ const NoteRenderer = (function() {
 
         /* ── Timestamps ── */
         .ts-timestamps {
-          font-size: 11px; color: var(--ts-body-text); opacity: 0.4;
+          font-size: 11px; color: var(--ts-body-text); opacity: 0.45;
           padding: 4px 12px 6px;
           font-family: 'DM Sans', sans-serif;
-          display: flex; gap: 12px; flex-shrink: 0;
+          display: flex; gap: 8px; flex-shrink: 0;
           align-items: center;
+        }
+        .ts-timestamp-text {
+          overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
         }
         .ts-saved-indicator {
           font-family: 'DM Sans', system-ui, sans-serif;
           font-size: 10px; color: var(--ts-body-text);
           opacity: 0; transition: opacity 150ms ease;
-          margin-left: auto;
+          margin-left: auto; flex-shrink: 0;
         }
 
         /* ── Resize handle ── */
@@ -200,16 +234,54 @@ const NoteRenderer = (function() {
         .ts-resize-handle:hover::after { opacity: 0.75; }
         .ts-resize-handle.ts-locked { pointer-events: none; opacity: 0.25; }
 
-        /* ── Glass mode overrides ── */
+        /* ── Liquid Glass mode overrides (backdrop-filter on :host avoids Backdrop Root) ── */
+        :host(.ts-glass) {
+          background: transparent !important;
+          backdrop-filter: blur(20px) saturate(180%);
+          -webkit-backdrop-filter: blur(20px) saturate(180%);
+          border: 1px solid rgba(255, 255, 255, 0.45) !important;
+          box-shadow:
+            inset 0 1px 1px rgba(255, 255, 255, 0.65),
+            inset 0 -1px 1px rgba(255, 255, 255, 0.15),
+            0 8px 32px rgba(0, 0, 0, 0.18) !important;
+        }
+        :host(.ts-glass.ts-focused) {
+          box-shadow:
+            inset 0 1px 1px rgba(255, 255, 255, 0.75),
+            inset 0 -1px 1px rgba(255, 255, 255, 0.2),
+            0 12px 36px rgba(0, 0, 0, 0.24) !important;
+        }
+        :host(.ts-glass.ts-lifting) {
+          box-shadow:
+            inset 0 1px 1px rgba(255, 255, 255, 0.75),
+            inset 0 -1px 1px rgba(255, 255, 255, 0.2),
+            0 18px 44px rgba(0, 0, 0, 0.28) !important;
+        }
         :host(.ts-glass) .ts-note {
           background: transparent;
+          border-radius: 9px;
+        }
+        :host(.ts-glass) .ts-header {
+          background: var(--ts-glass-header-bg);
+          border-bottom: 1px solid rgba(255, 255, 255, 0.25);
+          border-radius: 0;
+        }
+        :host(.ts-glass) .ts-header.ts-locked {
+          border-bottom: 2px dashed rgba(255, 255, 255, 0.55);
         }
         :host(.ts-glass) .ts-body-area {
-          background: transparent;
-          backdrop-filter: blur(24px) saturate(180%);
-          -webkit-backdrop-filter: blur(24px) saturate(180%);
+          background:
+            linear-gradient(
+              155deg,
+              rgba(255, 255, 255, 0.32) 0%,
+              rgba(255, 255, 255, 0.06) 48%,
+              rgba(255, 255, 255, 0.14) 100%
+            ),
+            var(--ts-glass-bg);
         }
         :host(.ts-glass) .ts-body-bg { display: none; }
+        :host(.ts-glass) .ts-color-dot { border-color: rgba(255, 255, 255, 0.85); }
+        :host(.ts-glass) .ts-timestamps { opacity: 0.65; }
       </style>
     `;
   }
@@ -233,7 +305,7 @@ const NoteRenderer = (function() {
           <button class="ts-color-dot" tabindex="0" aria-label="Change color. Current: ${note.color}"></button>
           <span class="ts-header-title"></span>
           <div class="ts-header-spacer"></div>
-          <button class="ts-btn ts-checklist-btn" tabindex="0" aria-label="Toggle checklist">${CHECKLIST_SVG}</button>
+          <button class="ts-btn ts-checklist-btn ${note.isChecklist ? 'ts-active' : ''}" tabindex="0" aria-label="Toggle checklist" aria-pressed="${note.isChecklist ? 'true' : 'false'}">${CHECKLIST_SVG}</button>
           <button class="ts-btn ts-pin-btn" tabindex="0" aria-label="${note.pinned ? 'Unlock note position' : 'Lock note position'}">${note.pinned ? PIN_FILLED_SVG : PIN_SVG}</button>
           <button class="ts-btn ts-min-btn" tabindex="0" aria-label="${note.minimized ? 'Restore note' : 'Minimize note'}">${note.minimized ? EYE_CLOSED_SVG : EYE_OPEN_SVG}</button>
           <button class="ts-btn ts-close-btn" tabindex="0" aria-label="Delete note">✕</button>
@@ -241,12 +313,12 @@ const NoteRenderer = (function() {
 
         <div class="ts-body-area">
           <div class="ts-body-bg"></div>
-          <input class="ts-title-input" type="text" placeholder="Untitled" aria-label="Note title">
+          <input class="ts-title-input" type="text" placeholder="Untitled" aria-label="Note title" ${note.pinned ? 'readonly' : ''}>
           <div class="ts-body-content">
             <textarea class="ts-textarea ${note.pinned ? 'ts-readonly' : ''}" aria-label="Note content" aria-multiline="true" placeholder="Type your note…" ${note.pinned ? 'readonly' : ''}></textarea>
             <div class="ts-checklist"></div>
           </div>
-          <div class="ts-timestamps"><span class="ts-saved-indicator" aria-live="polite" aria-atomic="true">✓ saved</span></div>
+          <div class="ts-timestamps"><span class="ts-timestamp-text"></span><span class="ts-saved-indicator" aria-live="polite" aria-atomic="true">✓ saved</span></div>
           <div class="ts-resize-handle ${note.pinned ? 'ts-locked' : ''}"></div>
         </div>
       </div>
@@ -255,33 +327,33 @@ const NoteRenderer = (function() {
 
   function applyThemeVars(host, colorKey) {
     const theme = ColorThemes.getTheme(colorKey);
+    const glass = ColorThemes.getGlassColors(colorKey);
     host.style.setProperty('--ts-bg', theme.bg);
     host.style.setProperty('--ts-header-bg', theme.headerBg);
     host.style.setProperty('--ts-header-text', theme.headerText);
     host.style.setProperty('--ts-body-text', theme.bodyText);
     host.style.setProperty('--ts-scrollbar', ColorThemes.getScrollbarColor(colorKey));
+    host.style.setProperty('--ts-glass-bg', glass.bg);
+    host.style.setProperty('--ts-glass-header-bg', glass.headerBg);
   }
 
-  function applyGlassMode(host, isGlass, colorKey) {
-    const theme = ColorThemes.getTheme(colorKey);
-    if (isGlass) {
-      host.classList.add('ts-glass');
-      host.style.setProperty('--ts-bg', ColorThemes.hexToRgba(theme.bg, 0.25));
-      host.style.boxShadow = 'inset 0 1px 1px rgba(255,255,255,0.4), 0 8px 32px rgba(0,0,0,0.15)';
-      host.style.border = '1px solid rgba(255,255,255,0.3)';
+  function applyGlassMode(host, isGlass) {
+    const next = Boolean(isGlass);
+    host.classList.toggle('ts-glass', next);
+    if (next) {
+      host.style.setProperty('backdrop-filter', 'blur(20px) saturate(180%)', 'important');
+      host.style.setProperty('-webkit-backdrop-filter', 'blur(20px) saturate(180%)', 'important');
     } else {
-      host.classList.remove('ts-glass');
-      host.style.setProperty('--ts-bg', theme.bg);
-      host.style.boxShadow = `
-        0 1px 2px rgba(0,0,0,0.07), 0 4px 8px rgba(0,0,0,0.10),
-        0 12px 24px rgba(0,0,0,0.08), 0 1px 0 rgba(255,255,255,0.55) inset
-      `;
-      host.style.border = 'none';
+      host.style.removeProperty('backdrop-filter');
+      host.style.removeProperty('-webkit-backdrop-filter');
+    }
+    if (host.isConnected) {
+      void host.offsetHeight;
     }
   }
 
   function buildNote(note) {
-    const host = document.createElement('div');
+    const host = document.createElement('tabstick-note');
     host.className = 'ts-host';
     host.setAttribute('role', 'dialog');
     host.setAttribute('aria-label', 'Sticky note');
@@ -290,21 +362,17 @@ const NoteRenderer = (function() {
 
     Object.assign(host.style, {
       position: 'fixed',
-      left: `${note.x}px`, top: `${note.y}px`,
+      left: `${note.x}px`,
+      top: `${note.y}px`,
       width: `${note.width}px`,
       height: note.minimized ? '36px' : `${note.height}px`,
-      zIndex: String(2147483640 + note.zIndex),
+      zIndex: String(Z_INDEX_BASE + note.zIndex),
       transform: `rotate(${note.rotation}deg)`,
       transformOrigin: 'top left',
-      borderRadius: '10px',
       pointerEvents: 'all',
-      overflow: 'hidden',
-      minWidth: '180px', minHeight: '36px',
-      boxShadow: `
-        0 1px 2px rgba(0,0,0,0.07), 0 4px 8px rgba(0,0,0,0.10),
-        0 12px 24px rgba(0,0,0,0.08), 0 1px 0 rgba(255,255,255,0.55) inset
-      `,
-      opacity: '0',
+      minWidth: '180px',
+      minHeight: '36px',
+      opacity: '1',
     });
 
     applyThemeVars(host, note.color);
@@ -330,10 +398,10 @@ const NoteRenderer = (function() {
     // Minimized state
     if (note.minimized) {
       const bodyArea = shadow.querySelector('.ts-body-area');
-      if (bodyArea) bodyArea.style.display = 'none';
-      const footer = shadow.querySelector('.ts-footer');
-      if (footer) footer.style.display = 'none';
-      // Show header title when minimized
+      if (bodyArea) {
+        bodyArea.style.display = 'none';
+        bodyArea.style.opacity = '0';
+      }
       const headerTitle = shadow.querySelector('.ts-header-title');
       if (headerTitle) {
         headerTitle.style.display = 'inline-block';
@@ -345,6 +413,8 @@ const NoteRenderer = (function() {
   }
 
   return {
+    __tabstick: true,
+    Z_INDEX_BASE,
     buildNote,
     applyThemeVars,
     applyGlassMode,

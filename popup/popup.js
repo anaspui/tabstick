@@ -3,6 +3,20 @@
  * Search, note list, export/import, glass mode, sync, explore, dashboard.
  */
 
+const CONTENT_CSS = ['content/content.css'];
+const CONTENT_SCRIPTS = [
+  'utils/colorThemes.js',
+  'utils/storage.js',
+  'utils/urlUtils.js',
+  'utils/idUtils.js',
+  'content/toastManager.js',
+  'content/dragHandler.js',
+  'content/resizeHandler.js',
+  'content/noteRenderer.js',
+  'content/noteManager.js',
+  'content/content.js',
+];
+
 document.addEventListener('DOMContentLoaded', async () => {
   // ── DOM refs ──
   const versionEl       = document.getElementById('ts-version');
@@ -15,7 +29,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   const toggleVisBtn    = document.getElementById('ts-toggle-visibility');
   const exploreBtn      = document.getElementById('ts-explore');
   const clearAllBtn     = document.getElementById('ts-clear-all');
+  const clearConfirmEl  = document.getElementById('ts-clear-confirm');
+  const clearCancelBtn  = document.getElementById('ts-clear-cancel');
+  const clearConfirmBtn = document.getElementById('ts-clear-confirm-btn');
   const errorEl         = document.getElementById('ts-error');
+  const statusEl        = document.getElementById('ts-status');
   const noteListSection = document.getElementById('ts-note-list-section');
   const noteListEl      = document.getElementById('ts-note-list');
   const searchInput     = document.getElementById('ts-search-input');
@@ -31,19 +49,43 @@ document.addEventListener('DOMContentLoaded', async () => {
   const fileImport      = document.getElementById('ts-file-import');
   const dashboardBtn    = document.getElementById('ts-dashboard');
 
-  let activeTab = null;
   let isHidden = false;
   let searchTimer = null;
+  let statusTimer = null;
+  let contentScriptReady = false;
+  let currentUrl = '';
+  let notes = [];
+  let meta = { hidden: false, noteCount: 0 };
 
   // ── Version ──
   try { versionEl.textContent = 'v' + chrome.runtime.getManifest().version; } catch {}
+
+  // ── Glass Mode (attach immediately before tab/script checks) ──
+  const isGlass = await Storage.getGlassMode();
+  toggleGlass.checked = isGlass;
+  toggleGlass.addEventListener('change', async (e) => {
+    const enabled = e.target.checked;
+    try {
+      await Storage.setGlassMode(enabled);
+      try {
+        const allTabs = await chrome.tabs.query({});
+        for (const t of allTabs) {
+          if (t?.id && UrlUtils.isAccessibleUrl(t.url)) {
+            chrome.tabs.sendMessage(t.id, { action: 'SET_GLASS_MODE', value: enabled }).catch(() => {});
+          }
+        }
+      } catch {}
+    } catch (err) {
+      console.error('Failed to update glass mode:', err);
+      _showStatus('Could not save Liquid Glass setting.', 'error');
+    }
+  });
 
   // ── Get tab ──
   let tab;
   try {
     const [t] = await chrome.tabs.query({ active: true, currentWindow: true });
     tab = t;
-    activeTab = t;
   } catch { return; }
 
   // ── Accessibility check ──
@@ -54,61 +96,114 @@ document.addEventListener('DOMContentLoaded', async () => {
     inaccessibleEl.style.display = 'block';
   }
 
-  // ── Load data ──
-  let currentUrl, notes, meta;
-  if (accessible) {
-    currentUrl = UrlUtils.normalizeUrl(tab.url);
+  async function _refreshCurrentPage() {
+    if (!accessible) return;
     try {
-      [notes, meta] = await Promise.all([Storage.getNotes(currentUrl), Storage.getMeta(currentUrl)]);
-    } catch { notes = []; meta = { hidden: false, noteCount: 0 }; }
-
-    urlEl.textContent = UrlUtils.formatUrlDisplay(tab.url);
-    _updateCount(notes.length);
-    isHidden = meta.hidden;
-    toggleVisBtn.textContent = isHidden ? 'Show Notes' : 'Hide Notes';
-
-    // Check content script readiness
-    const isReady = await _checkContentScript(tab.id);
-    if (!isReady) {
-      errorEl.textContent = 'Please refresh the page to use TabStick here.';
-      errorEl.style.display = 'block';
-      actionsEl.style.opacity = '0.5';
-      actionsEl.style.pointerEvents = 'none';
+      [notes, meta] = await Promise.all([
+        Storage.getNotes(currentUrl),
+        Storage.getMeta(currentUrl),
+      ]);
+    } catch {
+      notes = [];
+      meta = { hidden: false, noteCount: 0 };
     }
 
-    // Note list
+    _updateCount(notes.length);
+    isHidden = Boolean(meta.hidden);
+    toggleVisBtn.textContent = isHidden ? 'Show Notes' : 'Hide Notes';
+
+    if (contentScriptReady) {
+      toggleVisBtn.disabled = notes.length === 0;
+      clearAllBtn.disabled = notes.length === 0;
+    }
+
     if (notes.length > 0) {
       noteListSection.style.display = 'block';
       _renderNoteList(notes);
+    } else {
+      noteListSection.style.display = 'none';
+      noteListEl.innerHTML = '';
+      clearConfirmEl.style.display = 'none';
     }
   }
+
+  // ── Load data ──
+  if (accessible) {
+    currentUrl = UrlUtils.normalizeUrl(tab.url);
+    urlEl.textContent = UrlUtils.formatUrlDisplay(tab.url);
+
+    contentScriptReady = await _ensureContentScript(tab.id);
+    if (!contentScriptReady) {
+      errorEl.textContent = 'Please refresh the page to use TabStick here.';
+      errorEl.style.display = 'block';
+      addNoteBtn.disabled = true;
+      toggleVisBtn.disabled = true;
+      clearAllBtn.disabled = true;
+    }
+
+    await _refreshCurrentPage();
+  }
+
+  // ── Live storage listener ──
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local') return;
+    if (Storage.GLASS_KEY in changes) {
+      toggleGlass.checked = Boolean(changes[Storage.GLASS_KEY].newValue);
+    }
+    if (accessible && currentUrl) {
+      const nKey = Storage.notesKey(currentUrl);
+      const mKey = Storage.metaKey(currentUrl);
+      if (nKey in changes || mKey in changes) {
+        _refreshCurrentPage();
+      }
+    }
+  });
 
   // ══════════════════════════════
   // ── Actions ──
   // ══════════════════════════════
 
   addNoteBtn.addEventListener('click', async () => {
+    if (!accessible || !contentScriptReady) return;
     try {
       await chrome.tabs.sendMessage(tab.id, { action: 'CREATE_NOTE' });
-      _updateCount((notes?.length || 0) + 1);
-    } catch (e) { console.error('Failed to add note:', e); }
+      await _refreshCurrentPage();
+    } catch (e) {
+      console.error('Failed to add note:', e);
+      _showStatus('Could not create note on this page.', 'error');
+    }
   });
 
   toggleVisBtn.addEventListener('click', async () => {
+    if (!accessible || !contentScriptReady || notes.length === 0) return;
     try {
       await chrome.tabs.sendMessage(tab.id, { action: 'TOGGLE_NOTES' });
       isHidden = !isHidden;
       toggleVisBtn.textContent = isHidden ? 'Show Notes' : 'Hide Notes';
-    } catch (e) { console.error('Failed to toggle:', e); }
+    } catch (e) {
+      console.error('Failed to toggle:', e);
+      _showStatus('Could not toggle note visibility.', 'error');
+    }
   });
 
-  clearAllBtn.addEventListener('click', async () => {
-    if (confirm('Are you sure you want to clear all notes on this page?')) {
-      try {
-        await chrome.tabs.sendMessage(tab.id, { action: 'CLEAR_NOTES' });
-        _updateCount(0);
-        noteListSection.style.display = 'none';
-      } catch (e) { console.error('Failed to clear:', e); }
+  clearAllBtn.addEventListener('click', () => {
+    if (!accessible || !contentScriptReady || notes.length === 0) return;
+    clearConfirmEl.style.display = clearConfirmEl.style.display === 'none' ? 'flex' : 'none';
+  });
+
+  clearCancelBtn.addEventListener('click', () => {
+    clearConfirmEl.style.display = 'none';
+  });
+
+  clearConfirmBtn.addEventListener('click', async () => {
+    clearConfirmEl.style.display = 'none';
+    try {
+      await chrome.tabs.sendMessage(tab.id, { action: 'CLEAR_NOTES' });
+      notes = [];
+      await _refreshCurrentPage();
+    } catch (e) {
+      console.error('Failed to clear:', e);
+      _showStatus('Could not clear notes.', 'error');
     }
   });
 
@@ -118,7 +213,10 @@ document.addEventListener('DOMContentLoaded', async () => {
       const windowInfo = await chrome.windows.getCurrent();
       await chrome.sidePanel.open({ windowId: windowInfo.id });
       window.close();
-    } catch (e) { console.error('Failed to open side panel:', e); }
+    } catch (e) {
+      console.error('Failed to open side panel:', e);
+      _showStatus('Unable to open side panel.', 'error');
+    }
   });
 
   // ── Dashboard ──
@@ -143,12 +241,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     const results = [];
     const q = query.toLowerCase();
     for (const [key, notesList] of Object.entries(all)) {
-      if (!key.startsWith(Storage.NOTES_PREFIX)) continue;
+      if (!key.startsWith(Storage.NOTES_PREFIX) || !Array.isArray(notesList)) continue;
       const url = key.replace(Storage.NOTES_PREFIX, '');
       for (const note of notesList) {
         const titleText = note.title || '';
         const contentText = note.content || '';
-        if (`${titleText} ${contentText}`.toLowerCase().includes(q)) {
+        if (`${titleText} ${contentText} ${url}`.toLowerCase().includes(q)) {
           results.push({ url, note, titleText, contentText });
         }
       }
@@ -179,7 +277,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         <div class="ts-search-result-snippet">${_highlight(snippet, query)}</div>
         <div class="ts-search-result-go">Go →</div>
       `;
-      item.addEventListener('click', () => { chrome.tabs.update({ url }); window.close(); });
+      item.addEventListener('click', () => {
+        if (UrlUtils.isAccessibleUrl(url)) {
+          chrome.tabs.update({ url });
+          window.close();
+        }
+      });
       searchResults.appendChild(item);
     });
   }
@@ -197,23 +300,29 @@ document.addEventListener('DOMContentLoaded', async () => {
   exportJson.addEventListener('click', async () => {
     exportDropdown.style.display = 'none';
     try {
-      const allData = await chrome.storage.local.get(null);
+      const allData = await Storage.getAllData();
       const urls = {};
       for (const [key, val] of Object.entries(allData)) {
-        if (!key.startsWith(Storage.NOTES_PREFIX)) continue;
         urls[key.replace(Storage.NOTES_PREFIX, '')] = val;
       }
-      _download(JSON.stringify({ exported_at: new Date().toISOString(), version: 2, urls }, null, 2), 'tabstick-export.json', 'application/json');
-    } catch (e) { console.error('Export failed:', e); }
+      _download(
+        JSON.stringify({ exported_at: new Date().toISOString(), version: 2, urls }, null, 2),
+        'tabstick-export.json',
+        'application/json'
+      );
+    } catch (e) {
+      console.error('Export failed:', e);
+      _showStatus('Export failed.', 'error');
+    }
   });
 
   exportMd.addEventListener('click', async () => {
     exportDropdown.style.display = 'none';
     try {
-      const allData = await chrome.storage.local.get(null);
+      const allData = await Storage.getAllData();
       let md = `# TabStick Export\nExported: ${new Date().toLocaleString()}\n\n---\n\n`;
       for (const [key, notesList] of Object.entries(allData)) {
-        if (!key.startsWith(Storage.NOTES_PREFIX)) continue;
+        if (!Array.isArray(notesList) || notesList.length === 0) continue;
         const url = key.replace(Storage.NOTES_PREFIX, '');
         md += `## ${url}\n\n`;
         for (const note of notesList) {
@@ -225,7 +334,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         md += `---\n\n`;
       }
       _download(md, 'tabstick-export.md', 'text/markdown');
-    } catch (e) { console.error('Export failed:', e); }
+    } catch (e) {
+      console.error('Export failed:', e);
+      _showStatus('Export failed.', 'error');
+    }
   });
 
   btnImport.addEventListener('click', () => fileImport.click());
@@ -236,70 +348,109 @@ document.addEventListener('DOMContentLoaded', async () => {
     reader.onload = async (event) => {
       try {
         const data = JSON.parse(event.target.result);
-        if (data.version === 2 && data.urls) {
-          const flat = {};
-          for (const [url, notesList] of Object.entries(data.urls)) flat[`${Storage.NOTES_PREFIX}${url}`] = notesList;
-          await Storage.importData(flat);
-        } else {
-          // Try importing old format too
-          const migrated = {};
-          for (const [key, val] of Object.entries(data)) {
-            if (key.startsWith('notes::')) migrated[`${Storage.NOTES_PREFIX}${key.replace('notes::', '')}`] = val;
-            else if (key.startsWith(Storage.NOTES_PREFIX)) migrated[key] = val;
+        const flat = {};
+        if (data && data.version === 2 && data.urls && typeof data.urls === 'object') {
+          for (const [url, notesList] of Object.entries(data.urls)) {
+            flat[`${Storage.NOTES_PREFIX}${url}`] = notesList;
           }
-          await Storage.importData(migrated);
+        } else if (data && typeof data === 'object') {
+          for (const [key, val] of Object.entries(data)) {
+            if (key.startsWith('notes::')) flat[`${Storage.NOTES_PREFIX}${key.replace('notes::', '')}`] = val;
+            else if (key.startsWith(Storage.NOTES_PREFIX)) flat[key] = val;
+          }
         }
-        alert('Data imported successfully!');
-        window.close();
-      } catch (err) { alert('Failed to import: ' + err.message); }
-      fileImport.value = '';
+        const { urlCount, noteCount } = await Storage.importData(flat);
+        _showStatus(`Imported ${noteCount} note${noteCount === 1 ? '' : 's'} across ${urlCount} page${urlCount === 1 ? '' : 's'}.`, 'success');
+        await _refreshCurrentPage();
+      } catch (err) {
+        _showStatus('Import failed: ' + err.message, 'error');
+      } finally {
+        fileImport.value = '';
+      }
     };
     reader.readAsText(file);
-  });
-
-  // ══════════════════════════════
-  // ── Glass Mode ──
-  // ══════════════════════════════
-
-  const isGlass = await Storage.getGlassMode();
-  toggleGlass.checked = isGlass;
-  toggleGlass.addEventListener('change', async (e) => {
-    await Storage.setGlassMode(e.target.checked);
-    try { await chrome.tabs.sendMessage(tab.id, { action: 'SET_GLASS_MODE', value: e.target.checked }); } catch {}
   });
 
   // ══════════════════════════════
   // ── Sync Toggle ──
   // ══════════════════════════════
 
-  const { syncEnabled } = await chrome.storage.local.get('syncEnabled');
-  toggleSync.checked = !!syncEnabled;
+  const syncEnabled = await Storage.getSyncEnabled();
+  toggleSync.checked = syncEnabled;
   syncWarning.style.display = syncEnabled ? 'block' : 'none';
 
   toggleSync.addEventListener('change', async (e) => {
     const enable = e.target.checked;
     syncWarning.style.display = enable ? 'block' : 'none';
     if (enable) {
-      const all = await chrome.storage.local.get(null);
-      const noteKeys = {};
-      let totalSize = 0;
-      for (const [k, v] of Object.entries(all)) {
-        if (k.startsWith(Storage.NOTES_PREFIX)) { noteKeys[k] = v; totalSize += JSON.stringify(v).length; }
-      }
-      if (totalSize > 80000) alert("⚠️ Your notes exceed 80KB. Some may not sync due to Chrome's 102KB limit.");
-      try { await chrome.storage.sync.set(noteKeys); } catch (err) {
-        alert('Failed to enable sync: ' + err.message);
-        e.target.checked = false; syncWarning.style.display = 'none'; return;
+      try {
+        const [allLocal, allSync] = await Promise.all([
+          chrome.storage.local.get(null),
+          chrome.storage.sync.get(null),
+        ]);
+
+        const localUpdates = {};
+        const mergedNoteKeys = {};
+
+        for (const [k, v] of Object.entries(allLocal)) {
+          if (k.startsWith(Storage.NOTES_PREFIX) && Array.isArray(v) && v.length > 0) {
+            mergedNoteKeys[k] = v;
+          }
+        }
+
+        // Pull remote URLs that don't yet exist locally
+        for (const [k, v] of Object.entries(allSync)) {
+          if (k.startsWith(Storage.NOTES_PREFIX) && Array.isArray(v) && v.length > 0 && !(k in mergedNoteKeys)) {
+            mergedNoteKeys[k] = v;
+            localUpdates[k] = v;
+            const url = k.slice(Storage.NOTES_PREFIX.length);
+            localUpdates[Storage.metaKey(url)] = { hidden: false, noteCount: v.length };
+          }
+        }
+
+        let totalSize = 0;
+        for (const v of Object.values(mergedNoteKeys)) {
+          totalSize += JSON.stringify(v).length;
+        }
+        if (totalSize > 80000) {
+          _showStatus('Notes exceed 80KB; some items may exceed Chrome sync quota.', 'warning');
+        }
+
+        if (Object.keys(localUpdates).length > 0) {
+          await chrome.storage.local.set(localUpdates);
+        }
+        if (Object.keys(mergedNoteKeys).length > 0) {
+          await chrome.storage.sync.set(mergedNoteKeys);
+        }
+        await Storage.setSyncEnabled(true);
+        await _refreshCurrentPage();
+      } catch (err) {
+        e.target.checked = false;
+        syncWarning.style.display = 'none';
+        _showStatus('Failed to enable sync: ' + err.message, 'error');
       }
     } else {
       try {
-        const syncData = await chrome.storage.sync.get(null);
-        const noteKeys = {};
-        for (const [k, v] of Object.entries(syncData)) { if (k.startsWith(Storage.NOTES_PREFIX)) noteKeys[k] = v; }
-        await chrome.storage.local.set(noteKeys);
-      } catch (err) { console.error('Failed to migrate from sync:', err); }
+        const [allLocal, syncData] = await Promise.all([
+          chrome.storage.local.get(null),
+          chrome.storage.sync.get(null),
+        ]);
+        const localRestore = {};
+        for (const [k, v] of Object.entries(syncData)) {
+          if (k.startsWith(Storage.NOTES_PREFIX) && Array.isArray(v) && v.length > 0 && !(k in allLocal)) {
+            localRestore[k] = v;
+            const url = k.slice(Storage.NOTES_PREFIX.length);
+            localRestore[Storage.metaKey(url)] = { hidden: false, noteCount: v.length };
+          }
+        }
+        if (Object.keys(localRestore).length > 0) {
+          await chrome.storage.local.set(localRestore);
+        }
+        await Storage.setSyncEnabled(false);
+      } catch (err) {
+        console.error('Failed to disable sync cleanly:', err);
+      }
     }
-    await chrome.storage.local.set({ syncEnabled: enable });
   });
 
   // ══════════════════════════════
@@ -326,17 +477,20 @@ document.addEventListener('DOMContentLoaded', async () => {
       const delBtn = document.createElement('button');
       delBtn.className = 'ts-note-row-delete';
       delBtn.textContent = '✕';
+      delBtn.title = 'Delete note';
       delBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
         row.style.transition = 'height 200ms ease, opacity 200ms ease';
         row.style.height = '0'; row.style.opacity = '0'; row.style.overflow = 'hidden';
         setTimeout(() => row.remove(), 200);
-        notes = notes.filter(n => n.id !== note.id);
+        const latest = await Storage.getNotes(currentUrl);
+        notes = latest.filter(n => n.id !== note.id);
         await Storage.saveNotes(currentUrl, notes);
-        await Storage.saveMeta(currentUrl, { ...meta, noteCount: notes.length });
+        if (notes.length > 0) {
+          await Storage.saveMeta(currentUrl, { ...meta, noteCount: notes.length });
+        }
         try { await chrome.tabs.sendMessage(tab.id, { type: 'DELETE_NOTE', noteId: note.id }); } catch {}
-        _updateCount(notes.length);
-        if (notes.length === 0) noteListSection.style.display = 'none';
+        await _refreshCurrentPage();
       });
       row.appendChild(dot); row.appendChild(text); row.appendChild(delBtn);
       noteListEl.appendChild(row);
@@ -346,6 +500,17 @@ document.addEventListener('DOMContentLoaded', async () => {
   function _updateCount(count) {
     if (!countEl) return;
     countEl.textContent = count === 0 ? 'No notes yet on this page' : count === 1 ? '1 note on this page' : `${count} notes on this page`;
+  }
+
+  function _showStatus(msg, type = 'success') {
+    if (!statusEl) return;
+    clearTimeout(statusTimer);
+    statusEl.className = `ts-popup-status ts-status-${type}`;
+    statusEl.textContent = msg;
+    statusEl.style.display = 'block';
+    statusTimer = setTimeout(() => {
+      statusEl.style.display = 'none';
+    }, 4000);
   }
 
   function _download(content, filename, mimeType) {
@@ -362,9 +527,32 @@ document.addEventListener('DOMContentLoaded', async () => {
     return _escHtml(text.substring(0, idx)) + '<mark>' + _escHtml(text.substring(idx, idx + query.length)) + '</mark>' + _escHtml(text.substring(idx + query.length));
   }
 
-  function _escHtml(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+  function _escHtml(s) {
+    return String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
 
   async function _checkContentScript(tabId) {
-    try { const res = await chrome.tabs.sendMessage(tabId, { action: 'GET_COUNT' }); return res && res.success; } catch { return false; }
+    try {
+      const res = await chrome.tabs.sendMessage(tabId, { action: 'GET_COUNT' });
+      return Boolean(res && res.success);
+    } catch {
+      return false;
+    }
+  }
+
+  async function _ensureContentScript(tabId) {
+    if (await _checkContentScript(tabId)) return true;
+    try {
+      await chrome.scripting.insertCSS({ target: { tabId }, files: CONTENT_CSS });
+      await chrome.scripting.executeScript({ target: { tabId }, files: CONTENT_SCRIPTS });
+      return await _checkContentScript(tabId);
+    } catch {
+      return false;
+    }
   }
 });

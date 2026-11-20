@@ -2,9 +2,10 @@
  * ToastManager — Undo toast for note deletion.
  * Spec §4.9 — Slide-up animation, 4-second timer with progress bar, undo callback.
  */
-const ToastManager = (function() {
+var ToastManager = (globalThis.ToastManager && globalThis.ToastManager.__tabstick) ? globalThis.ToastManager : (function() {
   let currentToast = null;
   let currentTimer = null;
+  let pendingConfirm = null;
 
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -15,7 +16,7 @@ const ToastManager = (function() {
    * @param {function} confirmCallback — called after 4s if no undo
    */
   function show(noteSnapshot, undoCallback, confirmCallback) {
-    // Dismiss any existing toast
+    // Dismiss any existing toast (confirming its pending delete immediately)
     dismiss(true);
 
     const toast = document.createElement('div');
@@ -83,8 +84,9 @@ const ToastManager = (function() {
     toast.appendChild(dot);
     toast.appendChild(undoBtn);
     toast.appendChild(progressBar);
-    document.body.appendChild(toast);
+    (document.documentElement || document.body).appendChild(toast);
     currentToast = toast;
+    pendingConfirm = () => confirmCallback(noteSnapshot.id);
 
     // Appear animation
     if (!reducedMotion) {
@@ -113,23 +115,30 @@ const ToastManager = (function() {
     // Undo handler
     undoBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      clearTimeout(currentTimer);
+      pendingConfirm = null;
       dismiss(false);
       undoCallback(noteSnapshot);
     });
 
     // 4-second timer
     currentTimer = setTimeout(() => {
+      const confirmFn = pendingConfirm;
+      pendingConfirm = null;
       dismiss(false);
-      confirmCallback(noteSnapshot.id);
+      if (confirmFn) confirmFn();
     }, 4000);
   }
 
   /**
    * Dismiss the current toast.
-   * @param {boolean} immediate — skip animation
+   * @param {boolean} immediate — skip animation and confirm any pending deletion
    */
   function dismiss(immediate) {
+    if (immediate && pendingConfirm) {
+      const confirmFn = pendingConfirm;
+      pendingConfirm = null;
+      confirmFn();
+    }
     if (!currentToast) return;
     clearTimeout(currentTimer);
     const toast = currentToast;
@@ -153,5 +162,5 @@ const ToastManager = (function() {
     anim.onfinish = () => toast.remove();
   }
 
-  return { show, dismiss };
+  return { __tabstick: true, show, dismiss };
 })();

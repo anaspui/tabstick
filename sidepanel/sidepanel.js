@@ -7,28 +7,30 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   async function loadData() {
     allData = await Storage.getAllData();
-    renderNotes();
+    renderNotes(searchInput.value);
   }
 
   function renderNotes(filterText = '') {
     notesContainer.innerHTML = '';
     let hasNotes = false;
 
-    const lowerFilter = filterText.toLowerCase();
+    const lowerFilter = filterText.trim().toLowerCase();
 
     for (const [key, notes] of Object.entries(allData)) {
       if (!Array.isArray(notes) || notes.length === 0) continue;
 
       const url = key.replace(Storage.NOTES_PREFIX, '');
       const matchingNotes = notes.filter(note => {
+        if (!lowerFilter) return true;
+        const titleMatch = note.title && note.title.toLowerCase().includes(lowerFilter);
         const textMatch = note.content && note.content.toLowerCase().includes(lowerFilter);
         const urlMatch = url.toLowerCase().includes(lowerFilter);
-        return textMatch || urlMatch;
+        return titleMatch || textMatch || urlMatch;
       });
 
       if (matchingNotes.length > 0) {
         hasNotes = true;
-        
+
         const groupDiv = document.createElement('div');
         groupDiv.className = 'url-group';
 
@@ -38,7 +40,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         urlTitle.href = '#';
         urlTitle.addEventListener('click', (e) => {
           e.preventDefault();
-          chrome.tabs.create({ url: url });
+          if (UrlUtils.isAccessibleUrl(url)) {
+            chrome.tabs.create({ url });
+          }
         });
 
         groupDiv.appendChild(urlTitle);
@@ -46,16 +50,44 @@ document.addEventListener('DOMContentLoaded', async () => {
         matchingNotes.forEach(note => {
           const noteCard = document.createElement('div');
           noteCard.className = 'note-card';
-          
+
+          const noteBody = document.createElement('div');
+          noteBody.className = 'note-body';
+
+          const headerRow = document.createElement('div');
+          headerRow.className = 'note-header-row';
+
+          const dot = document.createElement('span');
+          dot.className = 'note-color-dot';
+          dot.style.background = ColorThemes.getTheme(note.color).headerBg;
+          headerRow.appendChild(dot);
+
+          if (note.title) {
+            const titleEl = document.createElement('div');
+            titleEl.className = 'note-title';
+            titleEl.textContent = note.title;
+            headerRow.appendChild(titleEl);
+          } else {
+            const titleEl = document.createElement('div');
+            titleEl.className = 'note-title';
+            titleEl.textContent = 'Untitled';
+            headerRow.appendChild(titleEl);
+          }
+
           const noteText = document.createElement('div');
           noteText.className = 'note-text';
-          noteText.textContent = note.content || 'Empty note';
-          
+          noteText.textContent = note.content || (note.title ? '' : 'Empty note');
+
+          noteBody.appendChild(headerRow);
+          if (noteText.textContent) {
+            noteBody.appendChild(noteText);
+          }
+
           const deleteBtn = document.createElement('button');
           deleteBtn.className = 'delete-btn';
-          deleteBtn.innerHTML = '&#10005;'; // X mark
+          deleteBtn.innerHTML = '&#10005;';
           deleteBtn.title = 'Delete note';
-          
+
           let confirmState = false;
           let resetTimeout;
 
@@ -64,7 +96,7 @@ document.addEventListener('DOMContentLoaded', async () => {
               confirmState = true;
               deleteBtn.textContent = 'Sure?';
               deleteBtn.classList.add('confirming');
-              
+
               resetTimeout = setTimeout(() => {
                 confirmState = false;
                 deleteBtn.innerHTML = '&#10005;';
@@ -72,12 +104,11 @@ document.addEventListener('DOMContentLoaded', async () => {
               }, 3000);
             } else {
               clearTimeout(resetTimeout);
-              const updatedNotes = notes.filter(n => n.id !== note.id);
               try {
-                if (updatedNotes.length === 0) {
-                  await Storage.deleteAllForUrl(url);
-                } else {
-                  await Storage.saveNotes(url, updatedNotes);
+                const latestNotes = await Storage.getNotes(url);
+                const updatedNotes = latestNotes.filter(n => n.id !== note.id);
+                await Storage.saveNotes(url, updatedNotes);
+                if (updatedNotes.length > 0) {
                   const meta = await Storage.getMeta(url);
                   await Storage.saveMeta(url, { ...meta, noteCount: updatedNotes.length });
                 }
@@ -112,7 +143,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
           });
 
-          noteCard.appendChild(noteText);
+          noteCard.appendChild(noteBody);
           noteCard.appendChild(deleteBtn);
           groupDiv.appendChild(noteCard);
         });
@@ -138,21 +169,22 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (btnGroupTabs) {
     btnGroupTabs.addEventListener('click', async () => {
       if (btnGroupTabs.disabled) return;
-      
+
       btnGroupTabs.disabled = true;
       const originalText = btnGroupTabs.textContent;
       btnGroupTabs.textContent = 'Grouping...';
 
       try {
         const currentData = await Storage.getAllData();
-        const urlsWithNotes = new Set(
-          Object.keys(currentData)
-            .filter(k => k.startsWith(Storage.NOTES_PREFIX))
-            .map(k => k.replace(Storage.NOTES_PREFIX, ''))
-            .filter(url => Array.isArray(currentData[Storage.NOTES_PREFIX + url]) && currentData[Storage.NOTES_PREFIX + url].length > 0)
-        );
+        const targetUrls = new Map();
+        for (const [key, notesList] of Object.entries(currentData)) {
+          if (!key.startsWith(Storage.NOTES_PREFIX) || !Array.isArray(notesList) || notesList.length === 0) continue;
+          const rawUrl = key.slice(Storage.NOTES_PREFIX.length);
+          if (!UrlUtils.isAccessibleUrl(rawUrl)) continue;
+          targetUrls.set(UrlUtils.normalizeUrl(rawUrl), rawUrl);
+        }
 
-        if (urlsWithNotes.size === 0) {
+        if (targetUrls.size === 0) {
           btnGroupTabs.textContent = 'No notes found';
           setTimeout(() => {
             btnGroupTabs.disabled = false;
@@ -161,101 +193,29 @@ document.addEventListener('DOMContentLoaded', async () => {
           return;
         }
 
-        const normalizeUrl = (u) => {
-          if (!u) return '';
-          try {
-            const parsed = new URL(u);
-            let host = parsed.hostname.toLowerCase().replace(/^www\./, '');
-            let path = parsed.pathname;
-            
-            path = path.replace(/\/index\.(php|html|htm|aspx|jsp)\/?$/i, '');
-            if (path.endsWith('/') && path.length > 1) {
-              path = path.slice(0, -1);
-            }
-            if (path === '/') path = '';
-            
-            let search = parsed.search;
-            if (search) {
-              const params = new URLSearchParams(search);
-              params.sort();
-              search = '?' + params.toString();
-            }
-            
-            return host + path + search;
-          } catch (e) {
-            let str = u.toLowerCase().trim();
-            try { str = decodeURIComponent(str); } catch(err) {}
-            str = str.split('#')[0];
-            str = str.replace(/\/index\.(php|html|htm|aspx|jsp)\/?$/i, '');
-            str = str.replace(/\/$/, '');
-            str = str.replace(/^https?:\/\//, '');
-            str = str.replace(/^www\./, '');
-            return str;
-          }
-        };
-
-        const normalizedUrlsWithNotes = new Map();
-        for (const url of urlsWithNotes) {
-          normalizedUrlsWithNotes.set(normalizeUrl(url), url);
-        }
-
         const existingTabIds = [];
-        const openNormalizedUrls = new Set();
-
+        const matchedNormUrls = new Set();
         const allTabs = await chrome.tabs.query({});
+
         allTabs.forEach(t => {
-          const tUrlNorm = normalizeUrl(t.url);
-          const tPendNorm = normalizeUrl(t.pendingUrl);
-          
-          if (normalizedUrlsWithNotes.has(tUrlNorm) || normalizedUrlsWithNotes.has(tPendNorm)) {
-            existingTabIds.push(t.id);
+          const tNorm = t.url && UrlUtils.isAccessibleUrl(t.url) ? UrlUtils.normalizeUrl(t.url) : '';
+          const pNorm = t.pendingUrl && UrlUtils.isAccessibleUrl(t.pendingUrl) ? UrlUtils.normalizeUrl(t.pendingUrl) : '';
+
+          const matched = (tNorm && targetUrls.has(tNorm)) ? tNorm : (pNorm && targetUrls.has(pNorm)) ? pNorm : null;
+          if (matched) {
+            matchedNormUrls.add(matched);
+            if (!t.pinned) {
+              existingTabIds.push(t.id);
+            }
           }
-          if (tUrlNorm) openNormalizedUrls.add(tUrlNorm);
-          if (tPendNorm) openNormalizedUrls.add(tPendNorm);
         });
 
-        for (const [normUrl, originalUrl] of normalizedUrlsWithNotes.entries()) {
-          if (openNormalizedUrls.has(normUrl)) continue;
-
-          const parts = normUrl.split('/');
-          const host = parts[0];
-          const pathEtc = normUrl.substring(host.length) || '/*';
-
-          const patterns = [
-            `*://${host}${pathEtc.startsWith('/') ? '' : '/'}${pathEtc}${pathEtc.endsWith('*') ? '' : '*'}`,
-            `*://www.${host}${pathEtc.startsWith('/') ? '' : '/'}${pathEtc}${pathEtc.endsWith('*') ? '' : '*'}`
-          ];
-          
-          for (const p of patterns) {
-            try {
-              const matchingTabs = await chrome.tabs.query({ url: p });
-              if (matchingTabs.length > 0) {
-                matchingTabs.forEach(mt => {
-                  existingTabIds.push(mt.id);
-                });
-                openNormalizedUrls.add(normUrl);
-                break;
-              }
-            } catch (e) {
-
-            }
-          }
-        }
-
-        const urlsToOpen = [];
-        const processedNorms = new Set();
-        
-        for (const [normUrl, originalUrl] of normalizedUrlsWithNotes.entries()) {
-          if (!openNormalizedUrls.has(normUrl) && !processedNorms.has(normUrl)) {
-            urlsToOpen.push(originalUrl);
-            processedNorms.add(normUrl);
-          }
-        }
-
         const newTabIds = [];
-        for (const url of urlsToOpen) {
-          const newTab = await chrome.tabs.create({ url: url, active: false });
-          newTabIds.push(newTab.id);
+        for (const [normUrl, originalUrl] of targetUrls.entries()) {
+          if (!matchedNormUrls.has(normUrl) && UrlUtils.isAccessibleUrl(originalUrl)) {
+            const newTab = await chrome.tabs.create({ url: originalUrl, active: false });
+            newTabIds.push(newTab.id);
+          }
         }
 
         const allTabIdsToGroup = [...new Set([...existingTabIds, ...newTabIds])];
@@ -266,7 +226,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
           const groupOptions = { tabIds: allTabIdsToGroup };
           const existingGroups = await chrome.tabGroups.query({ title: 'TabStick', windowId: currentWin.id });
-          
+
           if (existingGroups.length > 0) {
             groupOptions.groupId = existingGroups[0].id;
           }
@@ -275,7 +235,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           await chrome.tabGroups.update(groupId, { title: 'TabStick', color: 'yellow' });
         }
       } catch (err) {
-        console.error("Error grouping tabs:", err);
+        console.error('[TabStick] Error grouping tabs:', err);
       } finally {
         btnGroupTabs.disabled = false;
         btnGroupTabs.textContent = originalText;
@@ -286,7 +246,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area === 'local') {
       let shouldReload = false;
-      for (let key in changes) {
+      for (const key in changes) {
         if (key.startsWith(Storage.NOTES_PREFIX) || key.startsWith('tabstick::')) {
           shouldReload = true;
           break;

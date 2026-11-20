@@ -2,7 +2,7 @@
  * ID Utilities — Note ID generation, default note factory, and validation.
  * Spec §8.7, §8.8, §14.6
  */
-const IdUtils = (function() {
+var IdUtils = (globalThis.IdUtils && globalThis.IdUtils.__tabstick) ? globalThis.IdUtils : (function() {
   /**
    * Generate a unique note ID: "note_" + 8 random hex chars.
    * @returns {string}
@@ -41,6 +41,10 @@ const IdUtils = (function() {
     };
   }
 
+  function _clamp(val, min, max) {
+    return Math.max(min, Math.min(val, max));
+  }
+
   /**
    * Validate and sanitize a note object loaded from storage.
    * Returns null if the object is fundamentally invalid.
@@ -50,22 +54,25 @@ const IdUtils = (function() {
    */
   function validateNote(raw) {
     if (typeof raw !== 'object' || raw === null || !raw.id) return null;
+    const width = Number.isFinite(raw.width) ? _clamp(raw.width, 180, 600) : 240;
+    const height = Number.isFinite(raw.height) ? _clamp(raw.height, 120, 500) : 180;
+    const rotation = Number.isFinite(raw.rotation) ? _clamp(raw.rotation, -5, 5) : 0;
     return {
       id:          typeof raw.id          === 'string'  ? raw.id          : generateNoteId(),
-      x:           typeof raw.x           === 'number'  ? raw.x           : 100,
-      y:           typeof raw.y           === 'number'  ? raw.y           : 100,
-      width:       typeof raw.width       === 'number'  ? raw.width       : 240,
-      height:      typeof raw.height      === 'number'  ? raw.height      : 180,
+      x:           Number.isFinite(raw.x)               ? raw.x           : 100,
+      y:           Number.isFinite(raw.y)               ? raw.y           : 100,
+      width,
+      height,
       color:       ColorThemes.isValid(raw.color)        ? raw.color       : 'sunflower',
-      rotation:    typeof raw.rotation    === 'number'  ? raw.rotation    : 0,
+      rotation,
       title:       typeof raw.title       === 'string'  ? raw.title       : '',
       content:     typeof raw.content     === 'string'  ? raw.content     : '',
       minimized:   typeof raw.minimized   === 'boolean' ? raw.minimized   : false,
       pinned:      typeof raw.pinned      === 'boolean' ? raw.pinned      : false,
       isChecklist: typeof raw.isChecklist === 'boolean' ? raw.isChecklist : false,
-      zIndex:      typeof raw.zIndex      === 'number'  ? raw.zIndex      : 0,
-      createdAt:   typeof raw.createdAt   === 'number'  ? raw.createdAt   : Date.now(),
-      updatedAt:   typeof raw.updatedAt   === 'number'  ? raw.updatedAt   : Date.now(),
+      zIndex:      Number.isFinite(raw.zIndex)          ? raw.zIndex      : 0,
+      createdAt:   Number.isFinite(raw.createdAt)       ? raw.createdAt   : Date.now(),
+      updatedAt:   Number.isFinite(raw.updatedAt)       ? raw.updatedAt   : Date.now(),
     };
   }
 
@@ -76,16 +83,19 @@ const IdUtils = (function() {
    * @returns {object}
    */
   function clampNotePosition(note) {
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
+    const vw = typeof window !== 'undefined' ? window.innerWidth : 1280;
+    const vh = typeof window !== 'undefined' ? window.innerHeight : 720;
+    const maxX = Math.max(0, vw - note.width);
+    const maxY = Math.max(0, vh - 36);
     return {
       ...note,
-      x: Math.max(0, Math.min(note.x, vw - note.width)),
-      y: Math.max(0, Math.min(note.y, vh - 36)),
+      x: _clamp(note.x, 0, maxX),
+      y: _clamp(note.y, 0, maxY),
     };
   }
 
   return {
+    __tabstick: true,
     generateNoteId,
     createDefaultNote,
     validateNote,

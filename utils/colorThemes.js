@@ -3,7 +3,7 @@
  * Used by both content scripts and popup.
  * Spec §3.2 — 8 color themes with full palette.
  */
-const ColorThemes = (function() {
+var ColorThemes = (globalThis.ColorThemes && globalThis.ColorThemes.__tabstick) ? globalThis.ColorThemes : (function() {
   const themes = {
     sunflower: { bg: '#FFF9C4', headerBg: '#F9A825', headerText: '#4E3200', bodyText: '#3E2800' },
     peach:     { bg: '#FFE0B2', headerBg: '#F4511E', headerText: '#FFFFFF', bodyText: '#3E1500' },
@@ -57,12 +57,25 @@ const ColorThemes = (function() {
   }
 
   /**
+   * Get translucent colors for liquid glass mode.
+   * @param {string} key
+   * @returns {{ bg: string, headerBg: string }}
+   */
+  function getGlassColors(key) {
+    const t = getTheme(key);
+    return {
+      bg: hexToRgba(t.bg, 0.54),
+      headerBg: hexToRgba(t.headerBg, 0.72),
+    };
+  }
+
+  /**
    * Check if a color key is valid.
    * @param {string} key
    * @returns {boolean}
    */
   function isValid(key) {
-    return key in themes;
+    return typeof key === 'string' && Object.prototype.hasOwnProperty.call(themes, key);
   }
 
   /**
@@ -72,20 +85,25 @@ const ColorThemes = (function() {
    * @returns {string}
    */
   function hexToRgba(hex, alpha) {
-    hex = hex.replace('#', '');
-    const r = parseInt(hex.substring(0, 2), 16);
-    const g = parseInt(hex.substring(2, 4), 16);
-    const b = parseInt(hex.substring(4, 6), 16);
+    const clean = typeof hex === 'string' ? hex.replace('#', '').trim() : '';
+    const validHex = /^[0-9a-fA-F]{6}$/.test(clean)
+      ? clean
+      : themes.sunflower.bg.replace('#', '');
+    const r = parseInt(validHex.substring(0, 2), 16);
+    const g = parseInt(validHex.substring(2, 4), 16);
+    const b = parseInt(validHex.substring(4, 6), 16);
     return `rgba(${r}, ${g}, ${b}, ${alpha})`;
   }
 
   return {
+    __tabstick: true,
     themes,
     order,
     nextColor,
     randomColor,
     getTheme,
     getScrollbarColor,
+    getGlassColors,
     isValid,
     hexToRgba,
   };

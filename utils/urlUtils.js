@@ -2,7 +2,7 @@
  * URL Utilities — URL normalization for storage key generation.
  * Spec §8.1
  */
-const UrlUtils = (function() {
+var UrlUtils = (globalThis.UrlUtils && globalThis.UrlUtils.__tabstick) ? globalThis.UrlUtils : (function() {
   /**
    * Normalize a URL to protocol + hostname + pathname.
    * Strips query strings and fragments.
@@ -37,6 +37,7 @@ const UrlUtils = (function() {
    * @returns {string}
    */
   function formatUrlDisplay(rawUrl) {
+    if (!rawUrl || typeof rawUrl !== 'string') return '';
     try {
       const url = new URL(rawUrl);
       const display = url.hostname + url.pathname;
@@ -49,6 +50,7 @@ const UrlUtils = (function() {
   }
 
   return {
+    __tabstick: true,
     normalizeUrl,
     isAccessibleUrl,
     formatUrlDisplay,

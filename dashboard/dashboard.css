@@ -381,10 +381,22 @@ body {
   box-shadow: 0 8px 24px rgba(0,0,0,0.2);
 }
 
+.card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+}
+
 .card-title {
+  flex: 1;
+  min-width: 0;
   font-size: 15px;
   font-weight: 600;
   color: #1a1a1a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .card-content {
   font-size: 13px;
@@ -392,13 +404,20 @@ body {
   line-height: 1.5;
   flex: 1;
   overflow: hidden;
+  white-space: pre-wrap;
   display: -webkit-box;
   -webkit-line-clamp: 4;
   -webkit-box-orient: vertical;
 }
+.note-card mark {
+  background: rgba(245, 158, 11, 0.35);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 2px;
+}
 .card-meta {
   font-size: 11px;
-  color: rgba(0,0,0,0.4);
+  color: rgba(0,0,0,0.45);
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -410,7 +429,7 @@ body {
   padding: 4px 10px;
   font-size: 11px;
   font-weight: 600;
-  color: rgba(0,0,0,0.6);
+  color: rgba(0,0,0,0.65);
   cursor: pointer;
   transition: background 0.15s;
 }
@@ -420,15 +439,12 @@ body {
 
 /* Card Selection & Buttons */
 .card-checkbox {
-  position: absolute;
-  top: 12px;
-  left: 12px;
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
   opacity: 0;
   cursor: pointer;
   accent-color: var(--accent);
-  z-index: 10;
+  flex-shrink: 0;
   transition: opacity 0.2s;
 }
 .note-card:hover .card-checkbox, .card-checkbox:checked, .multi-select-active .card-checkbox {
@@ -439,15 +455,14 @@ body {
   outline-offset: -2px;
 }
 .card-actions {
-  position: absolute;
-  top: 12px;
-  right: 12px;
   display: flex;
   gap: 4px;
+  flex-shrink: 0;
   opacity: 0;
   transition: opacity 0.2s;
 }
-.note-card:hover .card-actions { opacity: 1; }
+.note-card:hover .card-actions,
+.note-card.pinned .card-actions { opacity: 1; }
 .card-action-btn {
   background: rgba(255,255,255,0.4);
   border: none;
@@ -474,7 +489,7 @@ body {
 /* Skeleton */
 .skeleton-card {
   height: 180px;
-  background: linear-gradient(90deg, #F5F5F5 25%, #E0E0E0 50%, #F5F5F5 75%);
+  background: linear-gradient(90deg, var(--surface) 25%, var(--surface-hover) 50%, var(--surface) 75%);
   background-size: 200% 100%;
   animation: shimmer 1.5s infinite;
   border-radius: 12px;

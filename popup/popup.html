@@ -41,12 +41,17 @@
   <div class="ts-popup-section ts-popup-actions" id="ts-actions">
     <button class="ts-btn ts-btn-primary" id="ts-add-note">+ Add Note</button>
     <button class="ts-btn ts-btn-outlined" id="ts-toggle-visibility">Hide Notes</button>
-    <button class="ts-btn ts-btn-outlined" id="ts-explore">Explore Notes</button>
     <button class="ts-btn ts-btn-danger" id="ts-clear-all">Clear All</button>
+    <div class="ts-confirm-inline" id="ts-clear-confirm" style="display: none;">
+      <span class="ts-confirm-text">Clear all notes?</span>
+      <button class="ts-confirm-btn ts-confirm-cancel" id="ts-clear-cancel">Cancel</button>
+      <button class="ts-confirm-btn ts-confirm-delete" id="ts-clear-confirm-btn">Clear</button>
+    </div>
   </div>
 
-  <!-- Error message -->
+  <!-- Error / status messages -->
   <div class="ts-popup-error" id="ts-error" style="display: none;"></div>
+  <div class="ts-popup-status" id="ts-status" style="display: none;" role="status" aria-live="polite"></div>
 
   <!-- Note list -->
   <div class="ts-popup-section" id="ts-note-list-section" style="display: none;">
@@ -82,13 +87,15 @@
     <input type="file" id="ts-file-import" accept=".json" style="display: none;">
   </div>
 
-  <!-- Dashboard -->
-  <div class="ts-popup-section">
-    <button id="ts-dashboard" class="ts-btn ts-btn-outlined ts-btn-full">📊 Open Dashboard</button>
+  <!-- Explore & Dashboard -->
+  <div class="ts-popup-section ts-nav-actions">
+    <button id="ts-explore" class="ts-btn ts-btn-outlined ts-btn-sm">Explore Notes</button>
+    <button id="ts-dashboard" class="ts-btn ts-btn-outlined ts-btn-sm">📊 Dashboard</button>
   </div>
 
   <script src="../utils/colorThemes.js"></script>
   <script src="../utils/urlUtils.js"></script>
+  <script src="../utils/idUtils.js"></script>
   <script src="../utils/storage.js"></script>
   <script src="popup.js"></script>
 </body>

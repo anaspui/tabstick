@@ -31,13 +31,15 @@
       <div class="filter-wrap">
         <button id="filter-btn" class="toolbar-btn">Filter by color ▾</button>
         <div id="filter-dropdown" class="filter-dropdown" style="display:none;">
-          <button class="filter-opt" data-color="all">All colors</button>
-          <button class="filter-opt multi-color" data-color="sunflower"><span class="dot" style="background:#FFF176"></span>Sunflower</button>
-          <button class="filter-opt multi-color" data-color="peach"><span class="dot" style="background:#FFCCBC"></span>Peach</button>
-          <button class="filter-opt multi-color" data-color="mint"><span class="dot" style="background:#C8E6C9"></span>Mint</button>
-          <button class="filter-opt multi-color" data-color="sky"><span class="dot" style="background:#B3E5FC"></span>Sky</button>
-          <button class="filter-opt multi-color" data-color="lavender"><span class="dot" style="background:#E1BEE7"></span>Lavender</button>
-          <button class="filter-opt multi-color" data-color="snow"><span class="dot" style="background:#FAFAFA"></span>Snow</button>
+          <button class="filter-opt selected" data-color="all">All colors</button>
+          <button class="filter-opt multi-color" data-color="sunflower"><span class="dot" style="background:#F9A825"></span>Sunflower</button>
+          <button class="filter-opt multi-color" data-color="peach"><span class="dot" style="background:#F4511E"></span>Peach</button>
+          <button class="filter-opt multi-color" data-color="mint"><span class="dot" style="background:#558B2F"></span>Mint</button>
+          <button class="filter-opt multi-color" data-color="sky"><span class="dot" style="background:#0277BD"></span>Sky</button>
+          <button class="filter-opt multi-color" data-color="lavender"><span class="dot" style="background:#6A1B9A"></span>Lavender</button>
+          <button class="filter-opt multi-color" data-color="rose"><span class="dot" style="background:#C2185B"></span>Rose</button>
+          <button class="filter-opt multi-color" data-color="slate"><span class="dot" style="background:#455A64"></span>Slate</button>
+          <button class="filter-opt multi-color" data-color="cream"><span class="dot" style="background:#F0EAD0"></span>Cream</button>
         </div>
       </div>
       <div class="sort-wrap filter-wrap">
@@ -57,6 +59,8 @@
           <button id="export-txt" class="filter-opt">Export as Text</button>
         </div>
       </div>
+      <button id="import-btn" class="toolbar-btn">Import</button>
+      <input type="file" id="dashboard-file-import" accept=".json" style="display:none;">
     </div>
   </header>
 
@@ -77,23 +81,15 @@
         <div class="skeleton-card"></div><div class="skeleton-card"></div><div class="skeleton-card"></div><div class="skeleton-card"></div>
       </div>
       <div id="all-notes-grid" class="view-content"></div>
-      <div id="empty-state" class="empty-state" style="display:none;">
-        <svg width="80" height="80" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" style="opacity:0.25; margin-bottom:16px;">
-          <rect x="4" y="4" width="16" height="16" rx="2" ry="2"></rect>
-          <path d="M9 9h6"></path><path d="M9 13h6"></path><path d="M9 17h3"></path>
-        </svg>
-        <p style="margin:0 0 12px 0; font-size:15px; color:#9E9E9E; font-weight:500;">No notes found</p>
-        <p style="margin:0; font-size:13px; color:#BDBDBD; max-width:280px; margin:0 auto; line-height:1.5;">Try a different search, or add your first note by clicking the TabStick icon in your toolbar.</p>
-      </div>
     </div>
 
     <!-- View: By Site -->
-    <div id="view-by-site" class="view-container" style="display:none;">
+    <div id="view-by-site" class="view-container">
       <div id="by-site-list" class="view-content"></div>
     </div>
 
     <!-- View: Stats -->
-    <div id="view-stats" class="view-container" style="display:none;">
+    <div id="view-stats" class="view-container">
       <div class="stats-grid">
         <div class="stat-card"><div class="stat-val" id="stat-total-notes">0</div><div class="stat-lbl">Total Notes</div></div>
         <div class="stat-card"><div class="stat-val" id="stat-total-sites">0</div><div class="stat-lbl">Total Sites</div></div>
@@ -123,9 +119,21 @@
         <div id="active-sites-list" class="active-sites-list"></div>
       </div>
     </div>
+
+    <!-- Shared Empty State -->
+    <div id="empty-state" class="empty-state" style="display:none;">
+      <svg width="80" height="80" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" style="opacity:0.25; margin-bottom:16px;">
+        <rect x="4" y="4" width="16" height="16" rx="2" ry="2"></rect>
+        <path d="M9 9h6"></path><path d="M9 13h6"></path><path d="M9 17h3"></path>
+      </svg>
+      <p style="margin:0 0 12px 0; font-size:15px; color:#9E9E9E; font-weight:500;">No notes found</p>
+      <p style="margin:0; font-size:13px; color:#BDBDBD; max-width:280px; margin:0 auto; line-height:1.5;">Try a different search, or add your first note by clicking the TabStick icon in your toolbar.</p>
+    </div>
   </main>
+
   <script src="../utils/colorThemes.js"></script>
   <script src="../utils/urlUtils.js"></script>
+  <script src="../utils/idUtils.js"></script>
   <script src="../utils/storage.js"></script>
   <script src="dashboard.js"></script>
 </body>

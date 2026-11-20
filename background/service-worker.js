@@ -1,5 +1,5 @@
 /**
- * Background Service Worker — Badge updates, command routing, storage migration.
+ * Background Service Worker — Badge updates, command routing, storage migration, sync mirroring.
  * Spec §11
  */
 
@@ -20,6 +20,25 @@ const _META_PREFIX  = 'tabstick::meta::';
 const _notesKey = (url) => `${_NOTES_PREFIX}${url}`;
 const _metaKey  = (url) => `${_META_PREFIX}${url}`;
 
+const CONTENT_CSS = ['content/content.css'];
+const CONTENT_SCRIPTS = [
+  'utils/colorThemes.js',
+  'utils/storage.js',
+  'utils/urlUtils.js',
+  'utils/idUtils.js',
+  'content/toastManager.js',
+  'content/dragHandler.js',
+  'content/resizeHandler.js',
+  'content/noteRenderer.js',
+  'content/noteManager.js',
+  'content/content.js',
+];
+
+function _isValidColor(color) {
+  const valid = ['sunflower', 'peach', 'mint', 'sky', 'lavender', 'rose', 'slate', 'cream'];
+  return valid.includes(color);
+}
+
 // ── One-time storage migration from old prefix ──
 
 chrome.runtime.onInstalled.addListener(async (details) => {
@@ -28,36 +47,34 @@ chrome.runtime.onInstalled.addListener(async (details) => {
       const all = await chrome.storage.local.get(null);
       const toSet = {};
       const toRemove = [];
-      let migrated = 0;
 
       for (const [key, value] of Object.entries(all)) {
         // Migrate old notes:: prefix to tabstick::notes::
-        if (key.startsWith('notes::') && !key.startsWith('tabstick::notes::')) {
+        if (key.startsWith('notes::') && !key.startsWith(_NOTES_PREFIX)) {
           const url = key.replace('notes::', '');
           const newKey = _notesKey(url);
           // Don't overwrite if new key already exists
           if (!(newKey in all)) {
-            // Migrate note schema: zOrder → zIndex, remove isChecklist
             const migratedNotes = (Array.isArray(value) ? value : []).map(note => ({
-              id:        note.id || 'note_' + Math.random().toString(16).slice(2, 10),
-              x:         typeof note.x === 'number' ? note.x : 100,
-              y:         typeof note.y === 'number' ? note.y : 100,
-              width:     typeof note.width === 'number' ? note.width : 240,
-              height:    typeof note.height === 'number' ? note.height : 180,
-              color:     _isValidColor(note.color) ? note.color : 'sunflower',
-              rotation:  typeof note.rotation === 'number' ? note.rotation : parseFloat((Math.random() * 4 - 2).toFixed(2)),
-              content:   typeof note.content === 'string' ? note.content : '',
-              minimized: typeof note.minimized === 'boolean' ? note.minimized : false,
-              pinned:    typeof note.pinned === 'boolean' ? note.pinned : false,
-              zIndex:    typeof note.zOrder === 'number' ? note.zOrder : (typeof note.zIndex === 'number' ? note.zIndex : 0),
-              createdAt: typeof note.createdAt === 'number' ? note.createdAt : Date.now(),
-              updatedAt: typeof note.updatedAt === 'number' ? note.updatedAt : Date.now(),
+              id:          note.id || 'note_' + Math.random().toString(16).slice(2, 10),
+              x:           typeof note.x === 'number' ? note.x : 100,
+              y:           typeof note.y === 'number' ? note.y : 100,
+              width:       typeof note.width === 'number' ? note.width : 240,
+              height:      typeof note.height === 'number' ? note.height : 180,
+              color:       _isValidColor(note.color) ? note.color : 'sunflower',
+              rotation:    typeof note.rotation === 'number' ? note.rotation : parseFloat((Math.random() * 4 - 2).toFixed(2)),
+              title:       typeof note.title === 'string' ? note.title : '',
+              content:     typeof note.content === 'string' ? note.content : '',
+              minimized:   typeof note.minimized === 'boolean' ? note.minimized : false,
+              pinned:      typeof note.pinned === 'boolean' ? note.pinned : false,
+              isChecklist: typeof note.isChecklist === 'boolean' ? note.isChecklist : false,
+              zIndex:      typeof note.zOrder === 'number' ? note.zOrder : (typeof note.zIndex === 'number' ? note.zIndex : 0),
+              createdAt:   typeof note.createdAt === 'number' ? note.createdAt : Date.now(),
+              updatedAt:   typeof note.updatedAt === 'number' ? note.updatedAt : Date.now(),
             }));
 
             toSet[newKey] = migratedNotes;
-            // Also create meta key
             toSet[_metaKey(url)] = { hidden: false, noteCount: migratedNotes.length };
-            migrated++;
           }
           toRemove.push(key);
         }
@@ -65,13 +82,9 @@ chrome.runtime.onInstalled.addListener(async (details) => {
 
       if (Object.keys(toSet).length > 0) {
         await chrome.storage.local.set(toSet);
-        console.log(`[TabStick] Migrated ${migrated} URL(s) to new storage format.`);
       }
-      // Clean up old keys and settings
-      const settingsToRemove = ['syncEnabled', 'setting::glassMode'];
-      const allRemove = [...toRemove, ...settingsToRemove.filter(k => k in all)];
-      if (allRemove.length > 0) {
-        await chrome.storage.local.remove(allRemove);
+      if (toRemove.length > 0) {
+        await chrome.storage.local.remove(toRemove);
       }
     } catch (err) {
       console.error('[TabStick] Migration failed:', err);
@@ -79,16 +92,11 @@ chrome.runtime.onInstalled.addListener(async (details) => {
   }
 });
 
-function _isValidColor(color) {
-  const valid = ['sunflower', 'peach', 'mint', 'sky', 'lavender', 'rose', 'slate', 'cream'];
-  return valid.includes(color);
-}
-
 // ── Badge updater ──
 
 async function updateBadgeForTab(tabId, rawUrl) {
   if (!rawUrl || !rawUrl.startsWith('http')) {
-    chrome.action.setBadgeText({ text: '', tabId });
+    try { await chrome.action.setBadgeText({ text: '', tabId }); } catch {}
     return;
   }
 
@@ -100,64 +108,115 @@ async function updateBadgeForTab(tabId, rawUrl) {
     const count = notes.length;
 
     if (count === 0) {
-      chrome.action.setBadgeText({ text: '', tabId });
+      await chrome.action.setBadgeText({ text: '', tabId });
       return;
     }
 
-    const text   = count > 9 ? '9+' : String(count);
+    const text    = count > 9 ? '9+' : String(count);
     const bgColor = meta.hidden ? '#90A4AE' : '#F9A825';
     const txColor = meta.hidden ? '#FFFFFF' : '#000000';
 
-    chrome.action.setBadgeText({ text, tabId });
-    chrome.action.setBadgeBackgroundColor({ color: bgColor, tabId });
-    chrome.action.setBadgeTextColor({ color: txColor, tabId });
-  } catch (err) {
-    chrome.action.setBadgeText({ text: '', tabId });
+    await chrome.action.setBadgeText({ text, tabId });
+    await chrome.action.setBadgeBackgroundColor({ color: bgColor, tabId });
+    await chrome.action.setBadgeTextColor({ color: txColor, tabId });
+  } catch {
+    try { await chrome.action.setBadgeText({ text: '', tabId }); } catch {}
   }
 }
 
-// Badge: on storage change
+// ── Storage change listener (badge updates + inbound sync mirror) ──
+
 chrome.storage.onChanged.addListener(async (changes, area) => {
-  if (area !== 'local') return;
-  try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (tab?.id && tab?.url) {
-      updateBadgeForTab(tab.id, tab.url);
+  if (area === 'local') {
+    const affectedUrls = new Set();
+    for (const key of Object.keys(changes)) {
+      if (key.startsWith(_NOTES_PREFIX)) {
+        affectedUrls.add(_normalizeUrl(key.slice(_NOTES_PREFIX.length)));
+      } else if (key.startsWith(_META_PREFIX)) {
+        affectedUrls.add(_normalizeUrl(key.slice(_META_PREFIX.length)));
+      }
     }
-  } catch {}
+    if (affectedUrls.size === 0) return;
+
+    try {
+      const tabs = await chrome.tabs.query({});
+      for (const tab of tabs) {
+        if (tab?.id && tab?.url && affectedUrls.has(_normalizeUrl(tab.url))) {
+          await updateBadgeForTab(tab.id, tab.url);
+        }
+      }
+    } catch {}
+    return;
+  }
+
+  if (area === 'sync') {
+    try {
+      const { syncEnabled } = await chrome.storage.local.get('syncEnabled');
+      if (!syncEnabled) return;
+
+      for (const [key, change] of Object.entries(changes)) {
+        if (!key.startsWith(_NOTES_PREFIX)) continue;
+        const url = key.slice(_NOTES_PREFIX.length);
+        const mKey = _metaKey(url);
+        const localData = await chrome.storage.local.get([key, mKey]);
+        const localNotes = localData[key];
+        const localMeta = localData[mKey];
+
+        if (Array.isArray(change.newValue) && change.newValue.length > 0) {
+          if (JSON.stringify(localNotes) !== JSON.stringify(change.newValue)) {
+            await chrome.storage.local.set({
+              [key]: change.newValue,
+              [mKey]: { ...(localMeta || { hidden: false }), noteCount: change.newValue.length },
+            });
+          }
+        } else if (key in localData) {
+          await chrome.storage.local.remove([key, mKey]);
+        }
+      }
+    } catch (err) {
+      console.error('[TabStick] Sync pull failed:', err);
+    }
+  }
 });
 
 // Badge: on tab switch
 chrome.tabs.onActivated.addListener(async ({ tabId }) => {
   try {
     const tab = await chrome.tabs.get(tabId);
-    if (tab?.url) updateBadgeForTab(tabId, tab.url);
+    if (tab?.url) await updateBadgeForTab(tab.id, tab.url);
   } catch {}
 });
 
 // Badge: on navigation
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  if (changeInfo.status === 'complete' && tab.url) {
+  if ((changeInfo.status === 'complete' || changeInfo.url) && tab?.url) {
     updateBadgeForTab(tabId, tab.url);
   }
 });
 
-// ── Keyboard command handler ──
+// ── Keyboard command handler (with on-demand script injection) ──
+
+async function _sendCommandToTab(tabId, payload) {
+  try {
+    await chrome.tabs.sendMessage(tabId, payload);
+  } catch {
+    await chrome.scripting.insertCSS({ target: { tabId }, files: CONTENT_CSS });
+    await chrome.scripting.executeScript({ target: { tabId }, files: CONTENT_SCRIPTS });
+    await chrome.tabs.sendMessage(tabId, payload);
+  }
+}
 
 chrome.commands.onCommand.addListener(async (command) => {
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tab?.id || !tab?.url?.startsWith('http')) return;
+    if (!tab?.id || !tab?.url || (!tab.url.startsWith('http://') && !tab.url.startsWith('https://'))) {
+      return;
+    }
 
     if (command === 'create-note') {
-      chrome.tabs.sendMessage(tab.id, { type: 'CREATE_NOTE' }, () => {
-        void chrome.runtime.lastError;
-      });
+      await _sendCommandToTab(tab.id, { type: 'CREATE_NOTE', fromCommand: true });
     } else if (command === 'toggle-notes') {
-      chrome.tabs.sendMessage(tab.id, { type: 'TOGGLE_NOTES' }, () => {
-        void chrome.runtime.lastError;
-      });
+      await _sendCommandToTab(tab.id, { type: 'TOGGLE_NOTES', fromCommand: true });
     }
   } catch {}
 });
-
