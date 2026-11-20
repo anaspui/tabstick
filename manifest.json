@@ -1,51 +1,82 @@
 {
   "manifest_version": 3,
   "name": "TabStick",
-  "version": "0.0.1",
-  "description": "Sticky Notes for your Tabs",
-  "permissions": ["storage", "activeTab", "scripting", "tabs", "sidePanel", "tabGroups"],
-  "host_permissions": ["<all_urls>"],
+  "version": "1.0.0",
+  "description": "Sticky notes for every browser tab. Create, pin, and persist notes on any webpage.",
+
+  "permissions": [
+    "storage",
+    "activeTab",
+    "scripting",
+    "tabs",
+    "sidePanel",
+    "tabGroups"
+  ],
+
+  "host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
+
   "action": {
     "default_popup": "popup/popup.html",
     "default_icon": {
-      "16": "assets/icons/icon16.png",
-      "48": "assets/icons/icon48.png",
+      "16":  "assets/icons/icon16.png",
+      "48":  "assets/icons/icon48.png",
       "128": "assets/icons/icon128.png"
-    }
+    },
+    "default_title": "TabStick — Sticky Notes"
   },
-  "content_scripts": [
-    {
-      "matches": ["<all_urls>"],
-      "js": ["utils/storage.js", "content/noteManager.js", "content/content.js"],
-      "css": ["content/content.css"],
-      "run_at": "document_idle"
-    }
-  ],
-  "background": {
-    "service_worker": "background/service-worker.js"
-  },
+
   "side_panel": {
     "default_path": "sidepanel/sidepanel.html"
   },
+
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": [
+        "utils/colorThemes.js",
+        "utils/storage.js",
+        "utils/urlUtils.js",
+        "utils/idUtils.js",
+        "content/toastManager.js",
+        "content/dragHandler.js",
+        "content/resizeHandler.js",
+        "content/noteRenderer.js",
+        "content/noteManager.js",
+        "content/content.js"
+      ],
+      "css": ["content/content.css"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+
+  "background": {
+    "service_worker": "background/service-worker.js"
+  },
+
   "commands": {
-    "add-note": {
+    "create-note": {
       "suggested_key": {
         "default": "Alt+S",
         "mac": "Alt+S"
       },
-      "description": "Add a new sticky note"
+      "description": "Create a new sticky note on this page"
     },
     "toggle-notes": {
       "suggested_key": {
         "default": "Alt+A",
         "mac": "Alt+A"
       },
-      "description": "Toggle visibility of sticky notes"
+      "description": "Toggle note visibility"
     }
   },
+
   "icons": {
-    "16": "assets/icons/icon16.png",
-    "48": "assets/icons/icon48.png",
+    "16":  "assets/icons/icon16.png",
+    "48":  "assets/icons/icon48.png",
     "128": "assets/icons/icon128.png"
   }
 }

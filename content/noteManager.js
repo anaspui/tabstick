@@ -1,394 +1,214 @@
+/**
+ * NoteManager — Central state management and CRUD for sticky notes.
+ * Full feature set: titles, timestamps, checklists, glass mode, undo, animations.
+ */
 const NoteManager = (function() {
-  const THEMES = {
-    sunflower: { bg: '#FFF176', accent: '#F9A825' },
-    peach:     { bg: '#FFCCBC', accent: '#FF7043' },
-    mint:      { bg: '#C8E6C9', accent: '#43A047' },
-    sky:       { bg: '#B3E5FC', accent: '#0288D1' },
-    lavender:  { bg: '#E1BEE7', accent: '#8E24AA' },
-    snow:      { bg: '#FAFAFA', accent: '#90A4AE' }
-  };
-  const THEME_KEYS = Object.keys(THEMES);
+  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-  const EYE_OPEN_SVG = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>`;
-  const EYE_CLOSED_SVG = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>`;
-  const CHECKLIST_SVG = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"></polyline><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path></svg>`;
+  let currentUrl   = '';
+  let notes        = new Map();
+  let domNodes     = new Map();
+  let maxZIndex    = 0;
+  let meta         = { hidden: false, noteCount: 0 };
+  let saveTimer    = null;
+  let spawnCounter = 0;
+  let isHidden     = false;
+  let isGlassMode  = false;
 
-  const shadowStyle = `
-    @import url('https://fonts.googleapis.com/css2?family=Caveat:wght@400;700&family=DM+Sans:wght@400;500&display=swap');
-
-    :host {
-      all: initial; /* CSS Reset */
-      position: fixed;
-      z-index: 2147483647;
-      box-sizing: border-box;
-      filter: drop-shadow(0 4px 12px rgba(0,0,0,0.15));
-      transition: filter 0.2s;
-    }
-
-    :host(:focus-within), :host(:hover) {
-      filter: drop-shadow(0 8px 24px rgba(0,0,0,0.25));
-      z-index: 2147483647; /* Ensure it stays on top */
-    }
-
-    .note-container {
-      width: 100%;
-      height: 100%;
-      display: flex;
-      flex-direction: column;
-      border-radius: 12px;
-      overflow: hidden;
-      font-family: 'DM Sans', sans-serif;
-    }
-
-    .header-bar {
-      height: 28px;
-      display: flex;
-      align-items: center;
-      padding: 0 8px;
-      cursor: move;
-      user-select: none;
-    }
-
-    .color-dot {
-      width: 12px;
-      height: 12px;
-      border-radius: 50%;
-      cursor: pointer;
-      margin-right: auto;
-      border: 1px solid rgba(0,0,0,0.1);
-    }
-
-    .btn {
-      background: none;
-      border: none;
-      color: rgba(0,0,0,0.5);
-      cursor: pointer;
-      font-size: 14px;
-      width: 24px;
-      height: 24px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      border-radius: 4px;
-    }
-
-    .btn:hover {
-      background: rgba(0,0,0,0.1);
-      color: #000;
-    }
-
-    .body-area {
-      flex: 1;
-      position: relative;
-      background: inherit;
-    }
-
-    textarea {
-      position: absolute;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      box-sizing: border-box;
-      background: transparent;
-      border: none;
-      resize: none;
-      padding: 12px;
-      font-family: 'Caveat', cursive, sans-serif;
-      font-size: 20px;
-      line-height: 1.4;
-      color: #333;
-      outline: none;
-    }
-
-    .checklist-container {
-      position: absolute;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      box-sizing: border-box;
-      padding: 12px;
-      padding-bottom: 24px;
-      overflow-y: auto;
-      font-family: 'Caveat', cursive, sans-serif;
-      font-size: 20px;
-      color: #333;
-      display: none;
-      flex-direction: column;
-      gap: 4px;
-    }
-    .checklist-item {
-      display: flex;
-      align-items: flex-start;
-      gap: 8px;
-    }
-    .checklist-item input[type="checkbox"] {
-      width: 18px;
-      height: 18px;
-      cursor: pointer;
-      margin-top: 6px;
-    }
-    .checklist-text {
-      flex: 1;
-      background: transparent;
-      border: none;
-      outline: none;
-      font-family: inherit;
-      font-size: inherit;
-      color: inherit;
-      line-height: 1.4;
-      min-width: 0;
-      word-wrap: break-word;
-      white-space: pre-wrap;
-    }
-    .checklist-item.checked .checklist-text {
-      text-decoration: line-through;
-      opacity: 0.6;
-    }
-    .add-item-btn {
-      background: transparent;
-      border: none;
-      cursor: pointer;
-      font-family: inherit;
-      font-size: 18px;
-      color: rgba(0,0,0,0.5);
-      text-align: left;
-      padding: 4px 0;
-      margin-top: 4px;
-      outline: none;
-    }
-    .add-item-btn:hover {
-      color: #000;
-    }
-    .checklist-container::-webkit-scrollbar,
-    textarea::-webkit-scrollbar {
-      width: 6px;
-    }
-    .checklist-container::-webkit-scrollbar-thumb,
-    textarea::-webkit-scrollbar-thumb {
-      background: rgba(0,0,0,0.2);
-      border-radius: 3px;
-    }
-
-    .resize-handle {
-      position: absolute;
-      bottom: 0;
-      right: 0;
-      width: 16px;
-      height: 16px;
-      cursor: nwse-resize;
-      background: linear-gradient(135deg, transparent 50%, rgba(0,0,0,0.1) 50%);
-      border-bottom-right-radius: 12px;
-    }
-  `;
-
-  let notesData = [];
-  const noteElements = new Map();
-  let currentUrl = '';
-  let isHidden = false;
-  let isGlassMode = false;
-  let currentZIndex = 100000;
-
-  function hexToRgba(hex, alpha) {
-    hex = hex.replace('#', '');
-    const r = parseInt(hex.substring(0, 2), 16);
-    const g = parseInt(hex.substring(2, 4), 16);
-    const b = parseInt(hex.substring(4, 6), 16);
-    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-  }
-
-  function init(url) {
+  // ── Init ──
+  function init(notesArray, urlMeta, url) {
     currentUrl = url;
-  }
+    meta = urlMeta;
+    notes.clear();
+    domNodes.clear();
+    maxZIndex = 0;
+    spawnCounter = 0;
 
-  function renderNotes(notes) {
-    notesData = notes;
-    notesData.forEach(note => createNoteElement(note));
-  }
-
-  function createNewNote() {
-    const id = 'note_' + Math.random().toString(36).substr(2, 9);
-    // center
-    const x = Math.max(0, (window.innerWidth - 220) / 2 + (Math.random() * 40 - 20));
-    const y = Math.max(0, (window.innerHeight - 160) / 2 + (Math.random() * 40 - 20));
-    
-    const newNote = {
-      id,
-      x,
-      y,
-      width: 220,
-      height: 160,
-      color: 'sunflower',
-      content: '',
-      minimized: false,
-      isChecklist: false,
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-      rotation: (Math.random() * 4) - 2 
-    };
-
-    notesData.push(newNote);
-    createNoteElement(newNote);
-    saveNotesData();
-    
-    const host = noteElements.get(id);
-    if (host && !isHidden) {
-      focusNote(host);
-    }
-  }
-
-  function createNoteElement(note) {
-    if (noteElements.has(note.id)) return; 
-
-    const host = document.createElement('div');
-    host.id = note.id;
-    
-    updateHostStyle(host, note);
-    if (note.rotation === undefined) note.rotation = (Math.random() * 4) - 2;
-    host.style.transform = `rotate(${note.rotation}deg)`;
-
-    const shadow = host.attachShadow({ mode: 'open' });
-    
-    const style = document.createElement('style');
-    style.textContent = shadowStyle;
-    shadow.appendChild(style);
-
-    const container = document.createElement('div');
-    container.className = 'note-container';
-    shadow.appendChild(container);
-
-    const header = document.createElement('div');
-    header.className = 'header-bar';
-    container.appendChild(header);
-
-    const colorDot = document.createElement('div');
-    colorDot.className = 'color-dot';
-    header.appendChild(colorDot);
-
-    const toggleChecklistBtn = document.createElement('button');
-    toggleChecklistBtn.className = 'btn';
-    toggleChecklistBtn.innerHTML = CHECKLIST_SVG;
-    toggleChecklistBtn.title = "Toggle Checklist";
-    header.appendChild(toggleChecklistBtn);
-
-    const minBtn = document.createElement('button');
-    minBtn.className = 'btn min-btn';
-    minBtn.innerHTML = note.minimized ? EYE_CLOSED_SVG : EYE_OPEN_SVG;
-    minBtn.title = "Minimize/Show";
-    header.appendChild(minBtn);
-
-    const closeBtn = document.createElement('button');
-    closeBtn.className = 'btn';
-    closeBtn.textContent = '✕';
-    header.appendChild(closeBtn);
-
-    const bodyArea = document.createElement('div');
-    bodyArea.className = 'body-area';
-    container.appendChild(bodyArea);
-
-    const textarea = document.createElement('textarea');
-    textarea.value = note.content || '';
-    bodyArea.appendChild(textarea);
-
-    const checklistContainer = document.createElement('div');
-    checklistContainer.className = 'checklist-container';
-    bodyArea.appendChild(checklistContainer);
-
-    const resizeHandle = document.createElement('div');
-    resizeHandle.className = 'resize-handle';
-    bodyArea.appendChild(resizeHandle);
-
-    applyTheme(container, header, colorDot, note.color);
-    applyMinimizedState(host, bodyArea, note.minimized);
-
-    if (isHidden) {
-      host.style.display = 'none';
+    for (const raw of notesArray) {
+      const validated = IdUtils.validateNote(raw);
+      if (!validated) { console.warn('[TabStick] Skipping invalid note:', raw); continue; }
+      const clamped = IdUtils.clampNotePosition(validated);
+      notes.set(clamped.id, clamped);
+      if (clamped.zIndex > maxZIndex) maxZIndex = clamped.zIndex;
     }
 
-    document.body.appendChild(host);
-    noteElements.set(note.id, host);
-    bringToFront(host);
+    for (const [, note] of notes) { renderNote(note, false); }
+    if (meta.hidden) { isHidden = true; _applyVisibilityToAll(true); }
+  }
 
-    host.addEventListener('mousedown', () => bringToFront(host));
+  // ── Create ──
+  function createNote() {
+    const offsetIndex = spawnCounter % 8;
+    const baseX = (window.innerWidth - 240) / 2;
+    const baseY = (window.innerHeight - 180) / 2;
+    spawnCounter++;
 
-    setupDrag(header, host, note);
-    setupResize(resizeHandle, host, note);
-    
-    let debounceTimer;
-    textarea.addEventListener('input', (e) => {
-      note.content = e.target.value;
-      note.updatedAt = Date.now();
-      clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(() => saveNotesData(), 500);
-    });
+    const note = IdUtils.createDefaultNote(baseX + offsetIndex * 24, baseY + offsetIndex * 24);
+    maxZIndex++;
+    note.zIndex = maxZIndex;
+    notes.set(note.id, note);
+    renderNote(note, true);
+
+    Storage.saveNotes(currentUrl, Array.from(notes.values())).catch(_handleSaveError);
+    meta.noteCount = notes.size;
+    Storage.saveMeta(currentUrl, meta).catch(_handleSaveError);
+  }
+
+  // ── Render ──
+  function renderNote(note, animate) {
+    const { host, shadow } = NoteRenderer.buildNote(note);
+
+    // Glass mode
+    if (isGlassMode) NoteRenderer.applyGlassMode(host, true, note.color);
+
+    // Bring to front on mousedown
+    host.addEventListener('mousedown', () => { bringToFront(note.id); });
+
+    // Drag & Resize
+    DragHandler.attachDrag(host, shadow, note, (c) => updateNote(note.id, c));
+    ResizeHandler.attachResize(host, shadow, note, (c) => updateNote(note.id, c));
+
+    const textarea = shadow.querySelector('.ts-textarea');
+    const titleInput = shadow.querySelector('.ts-title-input');
+    const headerTitle = shadow.querySelector('.ts-header-title');
+    const timestampsDiv = shadow.querySelector('.ts-timestamps');
+    const checklistContainer = shadow.querySelector('.ts-checklist');
+    let inputDebounce = null;
+
+    // ── Title ──
+    function updateHeaderTitle() {
+      if (headerTitle) {
+        headerTitle.textContent = note.title || (note.content || '').substring(0, 30) || 'Note';
+      }
+    }
+    updateHeaderTitle();
+
+    if (titleInput) {
+      titleInput.addEventListener('input', () => {
+        note.title = titleInput.value;
+        note.updatedAt = Date.now();
+        updateHeaderTitle();
+        _updateTimestamps();
+        clearTimeout(inputDebounce);
+        inputDebounce = setTimeout(() => { debouncedSave(); _showSavedIndicator(shadow); }, 500);
+      });
+    }
+
+    // ── Timestamps ──
+    function _updateTimestamps() {
+      if (!timestampsDiv) return;
+      const fmt = (ts) => {
+        if (!ts) return '';
+        return new Date(ts).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+      };
+      timestampsDiv.textContent = `Created ${fmt(note.createdAt)} · Edited ${fmt(note.updatedAt)}`;
+    }
+    _updateTimestamps();
+
+    // ── Textarea ──
+    if (textarea) {
+      textarea.addEventListener('input', () => {
+        note.content = textarea.value;
+        note.updatedAt = Date.now();
+        updateHeaderTitle();
+        _updateTimestamps();
+        clearTimeout(inputDebounce);
+        inputDebounce = setTimeout(() => { debouncedSave(); _showSavedIndicator(shadow); }, 500);
+      });
+
+      textarea.addEventListener('keydown', (e) => {
+        if (e.key === 'Tab') {
+          e.preventDefault();
+          const s = textarea.selectionStart, end = textarea.selectionEnd;
+          textarea.value = textarea.value.substring(0, s) + '\t' + textarea.value.substring(end);
+          textarea.selectionStart = textarea.selectionEnd = s + 1;
+          textarea.dispatchEvent(new Event('input'));
+        }
+        if (e.key === 'Escape') textarea.blur();
+      });
+
+      // Focus / blur scale
+      textarea.addEventListener('focus', () => {
+        if (!reducedMotion) {
+          host.style.transition = 'box-shadow 200ms ease, transform 200ms ease';
+          host.style.transform = `rotate(${note.rotation}deg) scale(1.015)`;
+          host.style.boxShadow = `0 2px 4px rgba(0,0,0,0.10), 0 8px 16px rgba(0,0,0,0.15), 0 20px 40px rgba(0,0,0,0.10), 0 1px 0 rgba(255,255,255,0.55) inset`;
+        }
+      });
+      textarea.addEventListener('blur', () => {
+        if (!reducedMotion) {
+          host.style.transition = 'box-shadow 200ms ease, transform 200ms ease';
+          host.style.transform = `rotate(${note.rotation}deg) scale(1.0)`;
+          host.style.boxShadow = isGlassMode
+            ? 'inset 0 1px 1px rgba(255,255,255,0.4), 0 8px 32px rgba(0,0,0,0.15)'
+            : `0 1px 2px rgba(0,0,0,0.07), 0 4px 8px rgba(0,0,0,0.10), 0 12px 24px rgba(0,0,0,0.08), 0 1px 0 rgba(255,255,255,0.55) inset`;
+          setTimeout(() => { if (host.isConnected) host.style.transition = ''; }, 250);
+        }
+      });
+    }
+
+    // ── Checklist ──
+    function textToChecklist(text) {
+      if (!text) return [{ text: '', checked: false }];
+      const lines = text.split('\n');
+      const items = [];
+      for (let line of lines) {
+        let checked = false, val = line;
+        if (val.startsWith('[x] ') || val.startsWith('[X] ')) { checked = true; val = val.substring(4); }
+        else if (val.startsWith('[ ] ')) { checked = false; val = val.substring(4); }
+        items.push({ text: val, checked });
+      }
+      if (items.length === 0) items.push({ text: '', checked: false });
+      return items;
+    }
+
+    function checklistToText(items) {
+      return items.map(item => (item.checked ? '[x] ' : '[ ] ') + item.text).join('\n');
+    }
 
     function renderChecklist() {
+      if (!checklistContainer) return;
       checklistContainer.innerHTML = '';
       const items = textToChecklist(note.content || '');
-      
+
       items.forEach((item, index) => {
         const itemDiv = document.createElement('div');
-        itemDiv.className = `checklist-item ${item.checked ? 'checked' : ''}`;
-        
+        itemDiv.className = `ts-checklist-item ${item.checked ? 'checked' : ''}`;
+
         const cb = document.createElement('input');
-        cb.type = 'checkbox';
-        cb.checked = item.checked;
-        
+        cb.type = 'checkbox'; cb.checked = item.checked;
+
         const textDiv = document.createElement('div');
-        textDiv.className = 'checklist-text';
+        textDiv.className = 'ts-checklist-text';
         textDiv.contentEditable = 'true';
         textDiv.textContent = item.text;
-        
+
         cb.addEventListener('change', () => {
           item.checked = cb.checked;
-          if (cb.checked) itemDiv.classList.add('checked');
-          else itemDiv.classList.remove('checked');
-          updateNoteContentFromChecklist(items);
+          itemDiv.classList.toggle('checked', cb.checked);
+          _updateFromChecklist(items);
         });
-        
+
         textDiv.addEventListener('input', () => {
           item.text = textDiv.textContent;
-          updateNoteContentFromChecklist(items);
+          _updateFromChecklist(items);
         });
 
         textDiv.addEventListener('keydown', (e) => {
           if (e.key === 'Enter') {
             e.preventDefault();
             items.splice(index + 1, 0, { text: '', checked: false });
-            updateNoteContentFromChecklist(items);
+            _updateFromChecklist(items);
             renderChecklist();
-            const nextDiv = checklistContainer.children[index + 1]?.querySelector('.checklist-text');
-            if (nextDiv) {
-              nextDiv.focus();
-              const sel = host.shadowRoot.getSelection();
-              if (sel) {
-                 const range = document.createRange();
-                 range.selectNodeContents(nextDiv);
-                 range.collapse(true);
-                 sel.removeAllRanges();
-                 sel.addRange(range);
-              }
-            }
-          } else if (e.key === 'Backspace' && textDiv.textContent === '') {
+            const nextDiv = checklistContainer.children[index + 1]?.querySelector('.ts-checklist-text');
+            if (nextDiv) nextDiv.focus();
+          } else if (e.key === 'Backspace' && textDiv.textContent === '' && items.length > 1) {
             e.preventDefault();
-            if (items.length > 1) {
-              items.splice(index, 1);
-              updateNoteContentFromChecklist(items);
-              renderChecklist();
-              const prevDiv = checklistContainer.children[Math.max(0, index - 1)]?.querySelector('.checklist-text');
-              if (prevDiv) {
-                prevDiv.focus();
-                const sel = host.shadowRoot.getSelection();
-                if (sel) {
-                  const range = document.createRange();
-                  range.selectNodeContents(prevDiv);
-                  range.collapse(false);
-                  sel.removeAllRanges();
-                  sel.addRange(range);
-                }
-              }
-            }
+            items.splice(index, 1);
+            _updateFromChecklist(items);
+            renderChecklist();
+            const prevDiv = checklistContainer.children[Math.max(0, index - 1)]?.querySelector('.ts-checklist-text');
+            if (prevDiv) prevDiv.focus();
           }
         });
 
@@ -398,37 +218,28 @@ const NoteManager = (function() {
       });
 
       const addBtn = document.createElement('button');
-      addBtn.className = 'add-item-btn';
+      addBtn.className = 'ts-add-item-btn';
       addBtn.textContent = '+ Add item';
       addBtn.addEventListener('click', () => {
         items.push({ text: '', checked: false });
-        updateNoteContentFromChecklist(items);
+        _updateFromChecklist(items);
         renderChecklist();
-        const lastDiv = checklistContainer.lastElementChild.previousElementSibling.querySelector('.checklist-text');
-        if (lastDiv) {
-          lastDiv.focus();
-          const sel = host.shadowRoot.getSelection();
-          if (sel) {
-             const range = document.createRange();
-             range.selectNodeContents(lastDiv);
-             range.collapse(true);
-             sel.removeAllRanges();
-             sel.addRange(range);
-          }
-        }
+        const lastText = checklistContainer.querySelector('.ts-checklist-item:last-of-type .ts-checklist-text');
+        if (lastText) lastText.focus();
       });
       checklistContainer.appendChild(addBtn);
     }
 
-    function updateNoteContentFromChecklist(items) {
+    function _updateFromChecklist(items) {
       note.content = checklistToText(items);
       note.updatedAt = Date.now();
-      textarea.value = note.content;
-      clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(() => saveNotesData(), 500);
+      if (textarea) textarea.value = note.content;
+      clearTimeout(inputDebounce);
+      inputDebounce = setTimeout(() => { debouncedSave(); _showSavedIndicator(shadow); }, 500);
     }
 
     function applyChecklistState() {
+      if (!textarea || !checklistContainer) return;
       if (note.isChecklist) {
         textarea.style.display = 'none';
         checklistContainer.style.display = 'flex';
@@ -438,293 +249,311 @@ const NoteManager = (function() {
         checklistContainer.style.display = 'none';
       }
     }
-
-    toggleChecklistBtn.addEventListener('mousedown', (e) => {
-      e.stopPropagation();
-      bringToFront(host);
-      note.isChecklist = !note.isChecklist;
-      applyChecklistState();
-      saveNotesData();
-    });
-
     applyChecklistState();
 
-    header.addEventListener('dblclick', (e) => {
-      e.stopPropagation();
-      bringToFront(host);
-      note.minimized = !note.minimized;
-      applyMinimizedState(host, bodyArea, note.minimized);
-      saveNotesData();
-    });
-
-    colorDot.addEventListener('mousedown', (e) => {
-      e.stopPropagation();
-      bringToFront(host);
-      let idx = THEME_KEYS.indexOf(note.color);
-      note.color = THEME_KEYS[(idx + 1) % THEME_KEYS.length];
-      applyTheme(container, header, colorDot, note.color);
-      saveNotesData();
-    });
-
-    minBtn.addEventListener('mousedown', (e) => {
-      e.stopPropagation();
-      bringToFront(host);
-      note.minimized = !note.minimized;
-      applyMinimizedState(host, bodyArea, note.minimized);
-      saveNotesData();
-    });
-
-    closeBtn.addEventListener('mousedown', (e) => {
-      e.stopPropagation();
-      host.remove();
-      noteElements.delete(note.id);
-      notesData = notesData.filter(n => n.id !== note.id);
-      saveNotesData();
-    });
-  }
-
-  function applyTheme(container, header, colorDot, colorKey) {
-    const theme = THEMES[colorKey] || THEMES['sunflower'];
-    if (isGlassMode) {
-      container.style.backgroundColor = hexToRgba(theme.bg, 0.25);
-      container.style.backdropFilter = 'blur(24px) saturate(180%)';
-      container.style.webkitBackdropFilter = 'blur(24px) saturate(180%)';
-      container.style.border = `1px solid rgba(255, 255, 255, 0.3)`;
-      container.style.boxShadow = 'inset 0 1px 1px rgba(255, 255, 255, 0.4), 0 8px 32px rgba(0, 0, 0, 0.15)';
-      header.style.backgroundColor = hexToRgba(theme.accent, 0.3);
-      colorDot.style.backgroundColor = hexToRgba(theme.bg, 0.8);
-      colorDot.style.border = '1px solid rgba(255, 255, 255, 0.5)';
-    } else {
-      container.style.backgroundColor = theme.bg;
-      container.style.backdropFilter = 'none';
-      container.style.webkitBackdropFilter = 'none';
-      container.style.border = 'none';
-      container.style.boxShadow = 'none';
-      header.style.backgroundColor = theme.accent;
-      colorDot.style.backgroundColor = theme.bg;
-      colorDot.style.border = '1px solid rgba(0,0,0,0.1)';
+    // Checklist toggle button
+    const checklistBtn = shadow.querySelector('.ts-checklist-btn');
+    if (checklistBtn) {
+      checklistBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        note.isChecklist = !note.isChecklist;
+        applyChecklistState();
+        debouncedSave();
+      });
     }
-  }
 
-  function updateAllThemes() {
-    noteElements.forEach((host, id) => {
-      const note = notesData.find(n => n.id === id);
-      if (note) {
-        const container = host.shadowRoot.querySelector('.note-container');
-        const header = host.shadowRoot.querySelector('.header-bar');
-        const colorDot = host.shadowRoot.querySelector('.color-dot');
-        if (container && header && colorDot) {
-          applyTheme(container, header, colorDot, note.color);
+    // ── Color dot ──
+    const colorDot = shadow.querySelector('.ts-color-dot');
+    if (colorDot) {
+      colorDot.addEventListener('click', (e) => {
+        e.stopPropagation();
+        note.color = ColorThemes.nextColor(note.color);
+        NoteRenderer.applyThemeVars(host, note.color);
+        if (isGlassMode) NoteRenderer.applyGlassMode(host, true, note.color);
+        colorDot.setAttribute('aria-label', `Change color. Current: ${note.color}`);
+        updateNote(note.id, { color: note.color });
+      });
+    }
+
+    // ── Pin ──
+    const pinBtn = shadow.querySelector('.ts-pin-btn');
+    if (pinBtn) {
+      pinBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        note.pinned = !note.pinned;
+        _applyPinnedState(shadow, host, note);
+        updateNote(note.id, { pinned: note.pinned });
+      });
+    }
+
+    // ── Minimize ──
+    const minBtn = shadow.querySelector('.ts-min-btn');
+    if (minBtn) {
+      minBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        note.minimized = !note.minimized;
+        _applyMinimizedState(host, shadow, note);
+        updateNote(note.id, { minimized: note.minimized });
+      });
+    }
+
+    // Double-click header to toggle minimize
+    const headerEl = shadow.querySelector('.ts-header');
+    if (headerEl) {
+      headerEl.addEventListener('dblclick', (e) => {
+        e.stopPropagation();
+
+        // Ignore double click if triggered on or inside buttons or color dots
+        const target = e.target;
+        if (target.closest('.ts-btn') || target.closest('.ts-color-dot')) {
+          return;
         }
-      }
-    });
-  }
 
-  function setGlassMode(value) {
-    if (isGlassMode !== value) {
-      isGlassMode = value;
-      updateAllThemes();
+        note.minimized = !note.minimized;
+        _applyMinimizedState(host, shadow, note);
+        updateNote(note.id, { minimized: note.minimized });
+      });
     }
-  }
 
-  function applyMinimizedState(host, bodyArea, minimized) {
-    const minBtn = host.shadowRoot.querySelector('.min-btn');
-    if (minimized) {
-      bodyArea.style.display = 'none';
-      host.style.height = '28px';
-      if(minBtn) minBtn.innerHTML = EYE_CLOSED_SVG;
+    // ── Close ──
+    const closeBtn = shadow.querySelector('.ts-close-btn');
+    if (closeBtn) {
+      closeBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        deleteNote(note.id);
+      });
+    }
+
+    // Apply hidden state
+    if (isHidden) {
+      host.style.display = 'none';
+    }
+
+    document.body.appendChild(host);
+    domNodes.set(note.id, host);
+
+    // Spawn animation
+    if (animate && !reducedMotion) {
+      host.animate([
+        { opacity: 0, transform: `rotate(${note.rotation}deg) scale(0.85) translateY(10px)` },
+        { opacity: 1, transform: `rotate(${note.rotation}deg) scale(1.0) translateY(0)` },
+      ], { duration: 280, easing: 'cubic-bezier(0.34, 1.56, 0.64, 1)', fill: 'forwards' });
     } else {
-      bodyArea.style.display = 'block';
-      const noteId = host.id;
-      const note = notesData.find(n => n.id === noteId);
-      if (note) {
-         host.style.height = note.height + 'px';
-      }
-      if(minBtn) minBtn.innerHTML = EYE_OPEN_SVG;
+      host.style.opacity = '1';
+    }
+
+    // Focus on creation
+    if (animate && !isHidden) {
+      setTimeout(() => {
+        if (textarea) textarea.focus();
+        else if (titleInput) titleInput.focus();
+      }, 10);
     }
   }
 
-  function updateHostStyle(host, note) {
-    host.style.left = note.x + 'px';
-    host.style.top = note.y + 'px';
-    host.style.width = note.width + 'px';
-    if (!note.minimized) {
-      host.style.height = note.height + 'px';
-    } else {
-      host.style.height = '28px';
-    }
+  function updateNote(id, changes) {
+    const note = notes.get(id);
+    if (!note) return;
+    Object.assign(note, changes);
+    note.updatedAt = Date.now();
+    debouncedSave();
   }
 
-  function setupDrag(dragHandle, host, note) {
-    let isDragging = false;
-    let startX, startY, initialX, initialY;
+  function deleteNote(id, { skipUndo = false } = {}) {
+    const note = notes.get(id);
+    const host = domNodes.get(id);
+    if (!note || !host) return;
+    const snapshot = { ...note };
+    notes.delete(id);
+    domNodes.delete(id);
 
-    dragHandle.addEventListener('mousedown', (e) => {
-      if (e.target.tagName && e.target.tagName.toLowerCase() === 'button' || e.target.classList.contains('color-dot')) {
-        return; 
-      }
-      isDragging = true;
-      startX = e.clientX;
-      startY = e.clientY;
-      initialX = note.x;
-      initialY = note.y;
-      document.body.classList.add('tabstick-dragging');
-    });
+    if (!reducedMotion) {
+      const anim = host.animate([
+        { opacity: 1, transform: `rotate(${note.rotation}deg) scale(1.0)` },
+        { opacity: 0, transform: `rotate(${note.rotation}deg) scale(0.88) translateY(-8px)` },
+      ], { duration: 200, easing: 'ease-in', fill: 'forwards' });
+      anim.onfinish = () => host.remove();
+    } else { host.remove(); }
 
-    document.addEventListener('mousemove', (e) => {
-      if (!isDragging) return;
-      const dx = e.clientX - startX;
-      const dy = e.clientY - startY;
-      
-      note.x = initialX + dx;
-      note.y = initialY + dy;
-
-      note.x = Math.max(0, Math.min(note.x, window.innerWidth - note.width));
-      note.y = Math.max(0, Math.min(note.y, window.innerHeight - 28));
-
-      updateHostStyle(host, note);
-    });
-
-    document.addEventListener('mouseup', () => {
-      if (isDragging) {
-        isDragging = false;
-        document.body.classList.remove('tabstick-dragging');
-        saveNotesData();
-      }
-    });
+    if (skipUndo) { _saveNow(); } else { ToastManager.show(snapshot, undoDelete, confirmDelete); }
   }
 
-  function setupResize(resizeHandle, host, note) {
-    let isResizing = false;
-    let startX, startY, initialW, initialH;
-
-    resizeHandle.addEventListener('mousedown', (e) => {
-      isResizing = true;
-      startX = e.clientX;
-      startY = e.clientY;
-      initialW = note.width;
-      initialH = note.height;
-      document.body.classList.add('tabstick-resizing');
-      e.stopPropagation(); 
-    });
-
-    document.addEventListener('mousemove', (e) => {
-      if (!isResizing) return;
-      const dx = e.clientX - startX;
-      const dy = e.clientY - startY;
-      
-      note.width = Math.max(160, initialW + dx);
-      note.height = Math.max(100, initialH + dy);
-
-      updateHostStyle(host, note);
-    });
-
-    document.addEventListener('mouseup', () => {
-      if (isResizing) {
-        isResizing = false;
-        document.body.classList.remove('tabstick-resizing');
-        saveNotesData();
-      }
-    });
+  function undoDelete(noteSnapshot) {
+    notes.set(noteSnapshot.id, noteSnapshot);
+    renderNote(noteSnapshot, false);
+    _saveNow();
   }
 
-  function bringToFront(host) {
-    currentZIndex++;
-    host.style.zIndex = currentZIndex;
+  function confirmDelete(id) { _saveNow(); }
+
+  function bringToFront(id) {
+    const note = notes.get(id);
+    const host = domNodes.get(id);
+    if (!note || !host) return;
+    if (note.zIndex >= maxZIndex && maxZIndex > 0) return;
+    maxZIndex++;
+    note.zIndex = maxZIndex;
+    host.style.zIndex = String(2147483640 + note.zIndex);
+    debouncedSave();
   }
 
-  function saveNotesData() {
-    StorageUtil.saveNotes(currentUrl, notesData);
-  }
-
-  function clearAll() {
-    notesData.forEach(note => {
-      const el = noteElements.get(note.id);
-      if (el) el.remove();
-    });
-    noteElements.clear();
-    notesData = [];
-    StorageUtil.clearNotes(currentUrl);
+  function setAllVisibility(hidden) {
+    meta.hidden = hidden;
+    isHidden = hidden;
+    _applyVisibilityToAll(hidden);
+    Storage.saveMeta(currentUrl, meta).catch(_handleSaveError);
   }
 
   function toggleVisibility() {
-    isHidden = !isHidden;
-    let topNoteElement = null;
-    let maxZ = -1;
-    noteElements.forEach(el => {
-      el.style.display = isHidden ? 'none' : 'block';
-      if (!isHidden) {
-        const z = parseInt(el.style.zIndex || 0);
-        if (z > maxZ) {
-          maxZ = z;
-          topNoteElement = el;
-        }
-      }
-    });
+    setAllVisibility(!isHidden);
+  }
 
-    if (!isHidden && topNoteElement) {
-      focusNote(topNoteElement);
+  function clearAll() {
+    for (const [id, host] of domNodes) {
+      const note = notes.get(id);
+      if (!reducedMotion && note) {
+        const anim = host.animate([
+          { opacity: 1, transform: `rotate(${note.rotation}deg) scale(1.0)` },
+          { opacity: 0, transform: `rotate(${note.rotation}deg) scale(0.88) translateY(-8px)` },
+        ], { duration: 200, easing: 'ease-in', fill: 'forwards' });
+        anim.onfinish = () => host.remove();
+      } else { host.remove(); }
+    }
+    notes.clear();
+    domNodes.clear();
+    Storage.deleteAllForUrl(currentUrl).catch(_handleSaveError);
+  }
+
+  async function handleUrlChange(newUrl) {
+    for (const [, host] of domNodes) host.remove();
+    notes.clear();
+    domNodes.clear();
+    clearTimeout(saveTimer);
+    currentUrl = newUrl;
+    try {
+      const [storedNotes, storedMeta] = await Promise.all([Storage.getNotes(currentUrl), Storage.getMeta(currentUrl)]);
+      init(storedNotes, storedMeta, currentUrl);
+    } catch (err) { console.error('[TabStick] handleUrlChange failed:', err); }
+  }
+
+  function setGlassMode(value) {
+    if (isGlassMode === value) return;
+    isGlassMode = value;
+    for (const [id, host] of domNodes) {
+      const note = notes.get(id);
+      if (note) {
+        NoteRenderer.applyGlassMode(host, value, note.color);
+        NoteRenderer.applyThemeVars(host, note.color);
+      }
     }
   }
 
-  function focusNote(host) {
-    if (!host) return;
-    setTimeout(() => {
-      const checklistContainer = host.shadowRoot.querySelector('.checklist-container');
-      if (checklistContainer && checklistContainer.style.display !== 'none') {
-        const texts = host.shadowRoot.querySelectorAll('.checklist-text');
-        if (texts.length > 0) {
-          const lastText = texts[texts.length - 1];
-          lastText.focus();
-          const sel = host.shadowRoot.getSelection();
-          if (sel) {
-            const range = document.createRange();
-            range.selectNodeContents(lastText);
-            range.collapse(false);
-            sel.removeAllRanges();
-            sel.addRange(range);
-          }
-        }
+  function debouncedSave() {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => _saveNow(), 500);
+  }
+
+  function _saveNow() {
+    const notesArray = Array.from(notes.values());
+    Storage.saveNotes(currentUrl, notesArray).catch(_handleSaveError);
+    meta.noteCount = notesArray.length;
+    Storage.saveMeta(currentUrl, meta).catch(_handleSaveError);
+  }
+
+  function _handleSaveError(err) { console.error('[TabStick] Save failed:', err); }
+
+  function _applyVisibilityToAll(hidden) {
+    for (const [, host] of domNodes) {
+      host.style.display = hidden ? 'none' : 'block';
+    }
+  }
+
+  function _applyPinnedState(shadow, host, note) {
+    const header = shadow.querySelector('.ts-header');
+    const textarea = shadow.querySelector('.ts-textarea');
+    const titleInput = shadow.querySelector('.ts-title-input');
+    const resizeHandle = shadow.querySelector('.ts-resize-handle');
+    const pinBtn = shadow.querySelector('.ts-pin-btn');
+
+    if (note.pinned) {
+      header.classList.add('ts-locked');
+      if (textarea) { textarea.classList.add('ts-readonly'); textarea.setAttribute('readonly', ''); }
+      if (titleInput) { titleInput.setAttribute('readonly', ''); titleInput.style.opacity = '0.85'; }
+      resizeHandle.classList.add('ts-locked');
+      pinBtn.innerHTML = NoteRenderer.PIN_FILLED_SVG;
+      pinBtn.setAttribute('aria-label', 'Unlock note position');
+    } else {
+      header.classList.remove('ts-locked');
+      if (textarea) { textarea.classList.remove('ts-readonly'); textarea.removeAttribute('readonly'); }
+      if (titleInput) { titleInput.removeAttribute('readonly'); titleInput.style.opacity = '1'; }
+      resizeHandle.classList.remove('ts-locked');
+      pinBtn.innerHTML = NoteRenderer.PIN_SVG;
+      pinBtn.setAttribute('aria-label', 'Lock note position');
+    }
+  }
+
+  function _applyMinimizedState(host, shadow, note) {
+    const bodyArea = shadow.querySelector('.ts-body-area');
+    const footer = shadow.querySelector('.ts-footer');
+    const minBtn = shadow.querySelector('.ts-min-btn');
+    const headerTitle = shadow.querySelector('.ts-header-title');
+    const colorDot = shadow.querySelector('.ts-color-dot');
+
+    if (note.minimized) {
+      if (!reducedMotion) {
+        if (bodyArea) { bodyArea.style.transition = 'opacity 100ms ease-out'; bodyArea.style.opacity = '0'; }
+        if (footer) footer.style.display = 'none';
+        setTimeout(() => {
+          if (bodyArea) bodyArea.style.display = 'none';
+          host.style.transition = 'height 220ms ease-out';
+          host.style.height = '36px';
+          setTimeout(() => { host.style.transition = ''; }, 250);
+        }, 80);
       } else {
-        const textarea = host.shadowRoot.querySelector('textarea');
-        if (textarea) {
-          textarea.focus();
-          textarea.setSelectionRange(textarea.value.length, textarea.value.length);
-        }
+        if (bodyArea) { bodyArea.style.display = 'none'; bodyArea.style.opacity = '0'; }
+        if (footer) footer.style.display = 'none';
+        host.style.height = '36px';
       }
-    }, 10);
-  }
-
-  function textToChecklist(text) {
-    if (!text) return [{ text: '', checked: false }];
-    const lines = text.split('\n');
-    const items = [];
-    for (let line of lines) {
-      let checked = false;
-      let val = line;
-      if (val.startsWith('[x] ') || val.startsWith('[X] ')) {
-        checked = true;
-        val = val.substring(4);
-      } else if (val.startsWith('[ ] ')) {
-        checked = false;
-        val = val.substring(4);
+      if (minBtn) { minBtn.innerHTML = NoteRenderer.EYE_CLOSED_SVG; minBtn.setAttribute('aria-label', 'Restore note'); }
+      if (headerTitle) {
+        headerTitle.style.display = 'inline-block';
+        headerTitle.textContent = note.title || (note.content || '').substring(0, 30) || 'Note';
       }
-      items.push({ text: val, checked });
+      if (colorDot) colorDot.style.marginRight = '0';
+    } else {
+      if (!reducedMotion) {
+        host.style.transition = 'height 250ms cubic-bezier(0.34, 1.2, 0.64, 1)';
+        host.style.height = `${note.height}px`;
+        setTimeout(() => {
+          if (bodyArea) { bodyArea.style.display = ''; bodyArea.style.transition = 'opacity 150ms ease-in'; bodyArea.style.opacity = '1'; }
+          if (footer) footer.style.display = '';
+          host.style.transition = '';
+        }, 100);
+      } else {
+        host.style.height = `${note.height}px`;
+        if (bodyArea) { bodyArea.style.display = ''; bodyArea.style.opacity = '1'; }
+        if (footer) footer.style.display = '';
+      }
+      if (minBtn) { minBtn.innerHTML = NoteRenderer.EYE_OPEN_SVG; minBtn.setAttribute('aria-label', 'Minimize note'); }
+      if (headerTitle) headerTitle.style.display = 'none';
+      if (colorDot) colorDot.style.marginRight = '';
     }
-    if (items.length === 0) items.push({ text: '', checked: false });
-    return items;
   }
 
-  function checklistToText(items) {
-    return items.map(item => (item.checked ? '[x] ' : '[ ] ') + item.text).join('\n');
+  function _showSavedIndicator(shadow) {
+    const indicator = shadow.querySelector('.ts-saved-indicator');
+    if (!indicator) return;
+    indicator.style.opacity = '0.75';
+    setTimeout(() => { indicator.style.transition = 'opacity 400ms ease'; indicator.style.opacity = '0'; }, 1000);
+    setTimeout(() => { indicator.style.transition = 'opacity 150ms ease'; }, 1500);
   }
 
   return {
-    init,
-    renderNotes,
-    createNewNote,
-    clearAll,
-    toggleVisibility,
-    setGlassMode
+    init, createNote, renderNote, updateNote, deleteNote, undoDelete, confirmDelete,
+    bringToFront, setAllVisibility, toggleVisibility, clearAll, handleUrlChange,
+    setGlassMode, debouncedSave,
+    get notes() { return notes; },
+    get currentUrl() { return currentUrl; },
+    get meta() { return meta; },
   };
 })();

@@ -1,9 +1,15 @@
-body.tabstick-dragging {
-  cursor: move !important;
+/* TabStick — Content Script Styles (host page level) */
+
+/* Cursor override during drag */
+body.ts-dragging,
+body.ts-dragging * {
+  cursor: grabbing !important;
   user-select: none !important;
 }
 
-body.tabstick-resizing {
-  cursor: nwse-resize !important;
+/* Cursor override during resize */
+body.ts-resizing,
+body.ts-resizing * {
+  cursor: se-resize !important;
   user-select: none !important;
 }

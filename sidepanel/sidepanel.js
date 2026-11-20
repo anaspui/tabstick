@@ -6,7 +6,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   let allData = {};
 
   async function loadData() {
-    allData = await StorageUtil.getAllData();
+    allData = await Storage.getAllData();
     renderNotes();
   }
 
@@ -19,7 +19,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     for (const [key, notes] of Object.entries(allData)) {
       if (!Array.isArray(notes) || notes.length === 0) continue;
 
-      const url = key.replace('notes::', '');
+      const url = key.replace(Storage.NOTES_PREFIX, '');
       const matchingNotes = notes.filter(note => {
         const textMatch = note.content && note.content.toLowerCase().includes(lowerFilter);
         const urlMatch = url.toLowerCase().includes(lowerFilter);
@@ -73,7 +73,42 @@ document.addEventListener('DOMContentLoaded', async () => {
             } else {
               clearTimeout(resetTimeout);
               const updatedNotes = notes.filter(n => n.id !== note.id);
-              await StorageUtil.saveNotes(url, updatedNotes);
+              try {
+                if (updatedNotes.length === 0) {
+                  await Storage.deleteAllForUrl(url);
+                } else {
+                  await Storage.saveNotes(url, updatedNotes);
+                  const meta = await Storage.getMeta(url);
+                  await Storage.saveMeta(url, { ...meta, noteCount: updatedNotes.length });
+                }
+              } catch (err) {
+                console.error('[TabStick] Sidepanel delete failed:', err);
+                return;
+              }
+
+              // Notify open tabs matching this URL to delete the note from memory and DOM
+              try {
+                const tabs = await chrome.tabs.query({});
+                const normalizedTargetUrl = UrlUtils.normalizeUrl(url);
+                for (const tab of tabs) {
+                  if (tab.url && UrlUtils.normalizeUrl(tab.url) === normalizedTargetUrl) {
+                    chrome.tabs.sendMessage(tab.id, { type: 'DELETE_NOTE', noteId: note.id }, () => {
+                      void chrome.runtime.lastError;
+                    });
+                  }
+                }
+              } catch (err) {
+                console.error('[TabStick] Failed to notify tabs of deletion:', err);
+              }
+
+              // Animate out and reload
+              noteCard.style.transition = 'opacity 200ms, height 200ms, margin 200ms, padding 200ms';
+              noteCard.style.opacity = '0';
+              noteCard.style.height = '0';
+              noteCard.style.margin = '0';
+              noteCard.style.padding = '0';
+              noteCard.style.overflow = 'hidden';
+              setTimeout(() => loadData(), 300);
             }
           });
 
@@ -109,12 +144,12 @@ document.addEventListener('DOMContentLoaded', async () => {
       btnGroupTabs.textContent = 'Grouping...';
 
       try {
-        const currentData = await StorageUtil.getAllData();
+        const currentData = await Storage.getAllData();
         const urlsWithNotes = new Set(
           Object.keys(currentData)
-            .filter(k => k.startsWith('notes::'))
-            .map(k => k.replace('notes::', ''))
-            .filter(url => Array.isArray(currentData['notes::' + url]) && currentData['notes::' + url].length > 0)
+            .filter(k => k.startsWith(Storage.NOTES_PREFIX))
+            .map(k => k.replace(Storage.NOTES_PREFIX, ''))
+            .filter(url => Array.isArray(currentData[Storage.NOTES_PREFIX + url]) && currentData[Storage.NOTES_PREFIX + url].length > 0)
         );
 
         if (urlsWithNotes.size === 0) {
@@ -252,7 +287,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (area === 'local') {
       let shouldReload = false;
       for (let key in changes) {
-        if (key.startsWith('notes::')) {
+        if (key.startsWith(Storage.NOTES_PREFIX) || key.startsWith('tabstick::')) {
           shouldReload = true;
           break;
         }
