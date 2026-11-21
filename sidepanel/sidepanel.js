@@ -107,11 +107,10 @@ document.addEventListener('DOMContentLoaded', async () => {
               try {
                 const latestNotes = await Storage.getNotes(url);
                 const updatedNotes = latestNotes.filter(n => n.id !== note.id);
-                await Storage.saveNotes(url, updatedNotes);
-                if (updatedNotes.length > 0) {
-                  const meta = await Storage.getMeta(url);
-                  await Storage.saveMeta(url, { ...meta, noteCount: updatedNotes.length });
-                }
+                const meta = updatedNotes.length > 0
+                  ? { ...(await Storage.getMeta(url)), noteCount: updatedNotes.length }
+                  : null;
+                await Storage.saveNotesWithMeta(url, updatedNotes, meta);
               } catch (err) {
                 console.error('[TabStick] Sidepanel delete failed:', err);
                 return;
@@ -123,7 +122,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const normalizedTargetUrl = UrlUtils.normalizeUrl(url);
                 for (const tab of tabs) {
                   if (tab.url && UrlUtils.normalizeUrl(tab.url) === normalizedTargetUrl) {
-                    chrome.tabs.sendMessage(tab.id, { type: 'DELETE_NOTE', noteId: note.id }, () => {
+                    chrome.tabs.sendMessage(tab.id, { type: 'DELETE_NOTE', noteId: note.id, skipSave: true }, () => {
                       void chrome.runtime.lastError;
                     });
                   }

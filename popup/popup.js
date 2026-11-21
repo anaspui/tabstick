@@ -376,82 +376,89 @@ document.addEventListener('DOMContentLoaded', async () => {
   // ══════════════════════════════
 
   const syncEnabled = await Storage.getSyncEnabled();
-  toggleSync.checked = syncEnabled;
-  syncWarning.style.display = syncEnabled ? 'block' : 'none';
-
-  toggleSync.addEventListener('change', async (e) => {
-    const enable = e.target.checked;
-    syncWarning.style.display = enable ? 'block' : 'none';
-    if (enable) {
-      try {
-        const [allLocal, allSync] = await Promise.all([
-          chrome.storage.local.get(null),
-          chrome.storage.sync.get(null),
-        ]);
-
-        const localUpdates = {};
-        const mergedNoteKeys = {};
-
-        for (const [k, v] of Object.entries(allLocal)) {
-          if (k.startsWith(Storage.NOTES_PREFIX) && Array.isArray(v) && v.length > 0) {
-            mergedNoteKeys[k] = v;
-          }
-        }
-
-        // Pull remote URLs that don't yet exist locally
-        for (const [k, v] of Object.entries(allSync)) {
-          if (k.startsWith(Storage.NOTES_PREFIX) && Array.isArray(v) && v.length > 0 && !(k in mergedNoteKeys)) {
-            mergedNoteKeys[k] = v;
-            localUpdates[k] = v;
-            const url = k.slice(Storage.NOTES_PREFIX.length);
-            localUpdates[Storage.metaKey(url)] = { hidden: false, noteCount: v.length };
-          }
-        }
-
-        let totalSize = 0;
-        for (const v of Object.values(mergedNoteKeys)) {
-          totalSize += JSON.stringify(v).length;
-        }
-        if (totalSize > 80000) {
-          _showStatus('Notes exceed 80KB; some items may exceed Chrome sync quota.', 'warning');
-        }
-
-        if (Object.keys(localUpdates).length > 0) {
-          await chrome.storage.local.set(localUpdates);
-        }
-        if (Object.keys(mergedNoteKeys).length > 0) {
-          await chrome.storage.sync.set(mergedNoteKeys);
-        }
-        await Storage.setSyncEnabled(true);
-        await _refreshCurrentPage();
-      } catch (err) {
-        e.target.checked = false;
-        syncWarning.style.display = 'none';
-        _showStatus('Failed to enable sync: ' + err.message, 'error');
+  if (syncWarning) {
+    syncWarning.style.display = syncEnabled ? 'block' : 'none';
+  }
+  if (toggleSync) {
+    toggleSync.checked = syncEnabled;
+    toggleSync.addEventListener('change', async (e) => {
+      const enable = e.target.checked;
+      if (syncWarning) {
+        syncWarning.style.display = enable ? 'block' : 'none';
       }
-    } else {
-      try {
-        const [allLocal, syncData] = await Promise.all([
-          chrome.storage.local.get(null),
-          chrome.storage.sync.get(null),
-        ]);
-        const localRestore = {};
-        for (const [k, v] of Object.entries(syncData)) {
-          if (k.startsWith(Storage.NOTES_PREFIX) && Array.isArray(v) && v.length > 0 && !(k in allLocal)) {
-            localRestore[k] = v;
-            const url = k.slice(Storage.NOTES_PREFIX.length);
-            localRestore[Storage.metaKey(url)] = { hidden: false, noteCount: v.length };
+      if (enable) {
+        try {
+          const [allLocal, allSync] = await Promise.all([
+            chrome.storage.local.get(null),
+            chrome.storage.sync.get(null),
+          ]);
+
+          const localUpdates = {};
+          const mergedNoteKeys = {};
+
+          for (const [k, v] of Object.entries(allLocal)) {
+            if (k.startsWith(Storage.NOTES_PREFIX) && Array.isArray(v) && v.length > 0) {
+              mergedNoteKeys[k] = v;
+            }
           }
+
+          // Pull remote URLs that don't yet exist locally
+          for (const [k, v] of Object.entries(allSync)) {
+            if (k.startsWith(Storage.NOTES_PREFIX) && Array.isArray(v) && v.length > 0 && !(k in mergedNoteKeys)) {
+              mergedNoteKeys[k] = v;
+              localUpdates[k] = v;
+              const url = k.slice(Storage.NOTES_PREFIX.length);
+              localUpdates[Storage.metaKey(url)] = { hidden: false, noteCount: v.length };
+            }
+          }
+
+          let totalSize = 0;
+          for (const v of Object.values(mergedNoteKeys)) {
+            totalSize += JSON.stringify(v).length;
+          }
+          if (totalSize > 80000) {
+            _showStatus('Notes exceed 80KB; some items may exceed Chrome sync quota.', 'warning');
+          }
+
+          if (Object.keys(localUpdates).length > 0) {
+            await chrome.storage.local.set(localUpdates);
+          }
+          if (Object.keys(mergedNoteKeys).length > 0) {
+            await chrome.storage.sync.set(mergedNoteKeys);
+          }
+          await Storage.setSyncEnabled(true);
+          await _refreshCurrentPage();
+        } catch (err) {
+          e.target.checked = false;
+          if (syncWarning) {
+            syncWarning.style.display = 'none';
+          }
+          _showStatus('Failed to enable sync: ' + err.message, 'error');
         }
-        if (Object.keys(localRestore).length > 0) {
-          await chrome.storage.local.set(localRestore);
+      } else {
+        try {
+          const [allLocal, syncData] = await Promise.all([
+            chrome.storage.local.get(null),
+            chrome.storage.sync.get(null),
+          ]);
+          const localRestore = {};
+          for (const [k, v] of Object.entries(syncData)) {
+            if (k.startsWith(Storage.NOTES_PREFIX) && Array.isArray(v) && v.length > 0 && !(k in allLocal)) {
+              localRestore[k] = v;
+              const url = k.slice(Storage.NOTES_PREFIX.length);
+              localRestore[Storage.metaKey(url)] = { hidden: false, noteCount: v.length };
+            }
+          }
+          if (Object.keys(localRestore).length > 0) {
+            await chrome.storage.local.set(localRestore);
+          }
+          await Storage.setSyncEnabled(false);
+        } catch (err) {
+          console.error('Failed to disable sync cleanly:', err);
         }
-        await Storage.setSyncEnabled(false);
-      } catch (err) {
-        console.error('Failed to disable sync cleanly:', err);
       }
-    }
-  });
+    });
+  }
 
   // ══════════════════════════════
   // ── Helpers ──
@@ -480,16 +487,19 @@ document.addEventListener('DOMContentLoaded', async () => {
       delBtn.title = 'Delete note';
       delBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
+        if (delBtn.disabled) return;
+        delBtn.disabled = true;
         row.style.transition = 'height 200ms ease, opacity 200ms ease';
         row.style.height = '0'; row.style.opacity = '0'; row.style.overflow = 'hidden';
         setTimeout(() => row.remove(), 200);
         const latest = await Storage.getNotes(currentUrl);
         notes = latest.filter(n => n.id !== note.id);
-        await Storage.saveNotes(currentUrl, notes);
-        if (notes.length > 0) {
-          await Storage.saveMeta(currentUrl, { ...meta, noteCount: notes.length });
-        }
-        try { await chrome.tabs.sendMessage(tab.id, { type: 'DELETE_NOTE', noteId: note.id }); } catch {}
+        await Storage.saveNotesWithMeta(
+          currentUrl,
+          notes,
+          notes.length > 0 ? { ...meta, noteCount: notes.length } : null
+        );
+        try { await chrome.tabs.sendMessage(tab.id, { type: 'DELETE_NOTE', noteId: note.id, skipSave: true }); } catch {}
         await _refreshCurrentPage();
       });
       row.appendChild(dot); row.appendChild(text); row.appendChild(delBtn);

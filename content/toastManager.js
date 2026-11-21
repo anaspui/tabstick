@@ -86,7 +86,7 @@ var ToastManager = (globalThis.ToastManager && globalThis.ToastManager.__tabstic
     toast.appendChild(progressBar);
     (document.documentElement || document.body).appendChild(toast);
     currentToast = toast;
-    pendingConfirm = () => confirmCallback(noteSnapshot.id);
+    pendingConfirm = typeof confirmCallback === 'function' ? () => confirmCallback(noteSnapshot.id) : null;
 
     // Appear animation
     if (!reducedMotion) {
@@ -113,11 +113,16 @@ var ToastManager = (globalThis.ToastManager && globalThis.ToastManager.__tabstic
     }
 
     // Undo handler
+    let undoHandled = false;
     undoBtn.addEventListener('click', (e) => {
       e.stopPropagation();
+      if (undoHandled) return;
+      undoHandled = true;
       pendingConfirm = null;
       dismiss(false);
-      undoCallback(noteSnapshot);
+      if (typeof undoCallback === 'function') {
+        undoCallback(noteSnapshot);
+      }
     });
 
     // 4-second timer

@@ -44,7 +44,7 @@
           break;
         }
         case 'DELETE_NOTE':
-          NoteManager.deleteNote(msg.noteId, { skipUndo: true });
+          NoteManager.deleteNote(msg.noteId, { skipUndo: true, skipSave: Boolean(msg.skipSave) });
           sendResponse({ success: true });
           break;
         case 'CLEAR_NOTES':
@@ -88,6 +88,23 @@
   });
 
   // ── Live storage sync (glass mode + notes/meta across tabs/popup/dashboard) ──
+  let syncSeq = 0;
+
+  async function syncCurrentUrlFromStorage() {
+    const seq = ++syncSeq;
+    await NoteManager.whenWritesSettled();
+    if (seq !== syncSeq) return;
+    const url = NoteManager.currentUrl;
+    const [freshNotes, freshMeta] = await Promise.all([
+      Storage.getNotes(url),
+      Storage.getMeta(url),
+    ]);
+    if (seq !== syncSeq || url !== NoteManager.currentUrl || NoteManager.hasPendingWrites()) {
+      return;
+    }
+    NoteManager.syncFromStorage(freshNotes, freshMeta);
+  }
+
   chrome.storage.onChanged.addListener(async (changes, area) => {
     if (area !== 'local') return;
 
@@ -99,11 +116,7 @@
     const mKey = Storage.metaKey(NoteManager.currentUrl);
     if (nKey in changes || mKey in changes) {
       try {
-        const [freshNotes, freshMeta] = await Promise.all([
-          Storage.getNotes(NoteManager.currentUrl),
-          Storage.getMeta(NoteManager.currentUrl),
-        ]);
-        NoteManager.syncFromStorage(freshNotes, freshMeta);
+        await syncCurrentUrlFromStorage();
       } catch (err) {
         console.error('[TabStick] Storage sync error:', err);
       }
@@ -185,13 +198,11 @@
     }
     if (document.visibilityState !== 'visible') return;
     try {
-      const [freshNotes, freshMeta, freshGlass] = await Promise.all([
-        Storage.getNotes(NoteManager.currentUrl),
-        Storage.getMeta(NoteManager.currentUrl),
+      const [freshGlass] = await Promise.all([
         Storage.getGlassMode(),
+        syncCurrentUrlFromStorage(),
       ]);
       NoteManager.setGlassMode(freshGlass);
-      NoteManager.syncFromStorage(freshNotes, freshMeta);
     } catch (err) {
       console.error('[TabStick] Cross-tab sync error:', err);
     }

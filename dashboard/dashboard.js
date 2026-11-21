@@ -3,6 +3,13 @@ let activeColorFilters = new Set();
 let activeSort = 'newest';
 let currentView = 'all-notes';
 let selectedNoteIds = new Set();
+let dashboardWriteQueue = Promise.resolve();
+
+function enqueueDashboardWrite(fn) {
+  const next = dashboardWriteQueue.catch(() => {}).then(fn);
+  dashboardWriteQueue = next;
+  return next;
+}
 
 document.addEventListener('DOMContentLoaded', async () => {
   await loadAllNotes();
@@ -255,16 +262,25 @@ function renderBySite(searchQuery = '') {
     header.querySelector('.site-action-btn.del').addEventListener('click', (e) => {
       e.stopPropagation();
       const oldNotes = [...(allNotes[url] || [])];
+      if (oldNotes.length === 0) return;
+
       group.style.opacity = '0';
       group.style.transform = 'scale(0.98)';
       setTimeout(() => group.remove(), 200);
       delete allNotes[url];
 
+      let savedMeta = { hidden: false, noteCount: 0 };
+      enqueueDashboardWrite(async () => {
+        savedMeta = await Storage.getMeta(url);
+        await Storage.deleteAllForUrl(url);
+      }).catch(err => console.error('[TabStick] Site delete failed:', err));
+
       showDashboardToast(`Deleted ${oldNotes.length} notes from site`, () => {
         allNotes[url] = oldNotes;
         switchView(currentView);
-      }, async () => {
-        await Storage.deleteAllForUrl(url);
+        enqueueDashboardWrite(async () => {
+          await Storage.saveNotesWithMeta(url, oldNotes, { ...savedMeta, noteCount: oldNotes.length });
+        }).catch(err => console.error('[TabStick] Site undo failed:', err));
       });
     });
   });
@@ -351,20 +367,29 @@ function createNoteCard(note, url, q) {
     selectedNoteIds.delete(note.id);
     updateMultiSelectUI();
 
+    enqueueDashboardWrite(async () => {
+      const latest = await Storage.getNotes(url);
+      const remaining = latest.filter(n => n.id !== snapshot.id);
+      const meta = remaining.length > 0
+        ? { ...(await Storage.getMeta(url)), noteCount: remaining.length }
+        : null;
+      await Storage.saveNotesWithMeta(url, remaining, meta);
+    }).catch(err => console.error('[TabStick] Dashboard delete failed:', err));
+
     showDashboardToast('Note deleted', () => {
       const current = allNotes[url] || [];
       if (!current.some(n => n.id === snapshot.id)) {
         allNotes[url] = [...current, snapshot];
       }
       switchView(currentView);
-    }, async () => {
-      const latest = await Storage.getNotes(url);
-      const remaining = latest.filter(n => n.id !== snapshot.id);
-      await Storage.saveNotes(url, remaining);
-      if (remaining.length > 0) {
-        const meta = await Storage.getMeta(url);
-        await Storage.saveMeta(url, { ...meta, noteCount: remaining.length });
-      }
+      enqueueDashboardWrite(async () => {
+        const latest = await Storage.getNotes(url);
+        if (!latest.some(n => n.id === snapshot.id)) {
+          const restored = [...latest, snapshot];
+          const meta = { ...(await Storage.getMeta(url)), noteCount: restored.length };
+          await Storage.saveNotesWithMeta(url, restored, meta);
+        }
+      }).catch(err => console.error('[TabStick] Dashboard undo failed:', err));
     });
   });
 
@@ -428,7 +453,10 @@ function showDashboardToast(message, onUndo, onConfirm) {
 
   const undoEl = toast.querySelector('.toast-undo-btn');
   if (undoEl) {
+    let handled = false;
     undoEl.addEventListener('click', () => {
+      if (handled) return;
+      handled = true;
       dismiss();
       onUndo();
     });

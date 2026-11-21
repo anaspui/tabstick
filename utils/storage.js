@@ -12,6 +12,19 @@ var Storage = (globalThis.Storage && globalThis.Storage.__tabstick) ? globalThis
   const notesKey = (url) => `${NOTES_PREFIX}${url}`;
   const metaKey  = (url) => `${META_PREFIX}${url}`;
 
+  const urlWriteGen = new Map();
+  let syncMirrorQueue = Promise.resolve();
+
+  function _nextUrlGen(normalizedUrl) {
+    const next = (urlWriteGen.get(normalizedUrl) || 0) + 1;
+    urlWriteGen.set(normalizedUrl, next);
+    return next;
+  }
+
+  function _isLatestUrlGen(normalizedUrl, gen) {
+    return urlWriteGen.get(normalizedUrl) === gen;
+  }
+
   /**
    * Get notes array for a normalized URL.
    * Returns [] if key doesn't exist (never throws on missing key).
@@ -30,6 +43,29 @@ var Storage = (globalThis.Storage && globalThis.Storage.__tabstick) ? globalThis
   }
 
   /**
+   * Full replace of the notes array (and optional meta) for this URL.
+   * Removes URL keys when empty, includes retry with exponential backoff,
+   * and mirrors to chrome.storage.sync when sync is enabled.
+   * @param {string} normalizedUrl
+   * @param {object[]} notes
+   * @param {object|null} [meta]
+   * @returns {Promise<void>}
+   */
+  async function saveNotesWithMeta(normalizedUrl, notes, meta = null) {
+    if (!Array.isArray(notes) || notes.length === 0) {
+      return deleteAllForUrl(normalizedUrl);
+    }
+    const gen = _nextUrlGen(normalizedUrl);
+    const key = notesKey(normalizedUrl);
+    const payload = { [key]: notes };
+    if (meta && typeof meta === 'object') {
+      payload[metaKey(normalizedUrl)] = meta;
+    }
+    await _retryWrite(payload, () => _isLatestUrlGen(normalizedUrl, gen));
+    await _syncNotesMirror(key, notes, () => _isLatestUrlGen(normalizedUrl, gen));
+  }
+
+  /**
    * Full replace of the notes array for this URL.
    * Removes URL keys when empty, includes retry with exponential backoff,
    * and mirrors to chrome.storage.sync when sync is enabled.
@@ -38,13 +74,7 @@ var Storage = (globalThis.Storage && globalThis.Storage.__tabstick) ? globalThis
    * @returns {Promise<void>}
    */
   async function saveNotes(normalizedUrl, notes) {
-    if (!Array.isArray(notes) || notes.length === 0) {
-      await deleteAllForUrl(normalizedUrl);
-      return;
-    }
-    const key = notesKey(normalizedUrl);
-    await _retryWrite({ [key]: notes });
-    await _syncNotesMirror(key, notes);
+    return saveNotesWithMeta(normalizedUrl, notes, null);
   }
 
   /**
@@ -80,13 +110,14 @@ var Storage = (globalThis.Storage && globalThis.Storage.__tabstick) ? globalThis
    * @returns {Promise<void>}
    */
   async function deleteAllForUrl(normalizedUrl) {
+    const gen = _nextUrlGen(normalizedUrl);
     const key = notesKey(normalizedUrl);
     try {
       await chrome.storage.local.remove([key, metaKey(normalizedUrl)]);
     } catch (err) {
       console.error('[TabStick] Storage.deleteAllForUrl failed:', err);
     }
-    await _syncNotesMirror(key, null);
+    await _syncNotesMirror(key, null, () => _isLatestUrlGen(normalizedUrl, gen));
   }
 
   /**
@@ -107,16 +138,23 @@ var Storage = (globalThis.Storage && globalThis.Storage.__tabstick) ? globalThis
    * Internal: write with retry (3 attempts, exponential backoff 100/200/400ms).
    * Spec §2.3 — On storage write failure, retry up to 3 times.
    * @param {object} data
+   * @param {function|null} [shouldRetry]
    * @returns {Promise<void>}
    */
-  async function _retryWrite(data) {
+  async function _retryWrite(data, shouldRetry = null) {
     const delays = [100, 200, 400];
     for (let attempt = 0; attempt <= delays.length; attempt++) {
+      if (attempt > 0 && typeof shouldRetry === 'function' && !shouldRetry()) {
+        return;
+      }
       try {
         await chrome.storage.local.set(data);
         return; // success
       } catch (err) {
         if (attempt < delays.length) {
+          if (typeof shouldRetry === 'function' && !shouldRetry()) {
+            return;
+          }
           await new Promise(r => setTimeout(r, delays[attempt]));
         } else {
           console.error('[TabStick] Storage write failed after 3 retries:', err);
@@ -130,18 +168,25 @@ var Storage = (globalThis.Storage && globalThis.Storage.__tabstick) ? globalThis
    * Best-effort sync mirror helper for notes mutations.
    * @param {string} key
    * @param {object[]|null} notes — null removes the key
+   * @param {function|null} [shouldMirror]
    */
-  async function _syncNotesMirror(key, notes) {
-    if (!(await getSyncEnabled())) return;
-    try {
-      if (notes === null) {
-        await chrome.storage.sync.remove(key);
-      } else {
-        await chrome.storage.sync.set({ [key]: notes });
+  function _syncNotesMirror(key, notes, shouldMirror = null) {
+    const next = syncMirrorQueue.catch(() => {}).then(async () => {
+      if (typeof shouldMirror === 'function' && !shouldMirror()) return;
+      if (!(await getSyncEnabled())) return;
+      if (typeof shouldMirror === 'function' && !shouldMirror()) return;
+      try {
+        if (notes === null) {
+          await chrome.storage.sync.remove(key);
+        } else {
+          await chrome.storage.sync.set({ [key]: notes });
+        }
+      } catch (err) {
+        console.warn('[TabStick] Sync mirror failed:', err);
       }
-    } catch (err) {
-      console.warn('[TabStick] Sync mirror failed:', err);
-    }
+    });
+    syncMirrorQueue = next;
+    return next;
   }
 
   /**
@@ -297,6 +342,7 @@ var Storage = (globalThis.Storage && globalThis.Storage.__tabstick) ? globalThis
     metaKey,
     getNotes,
     saveNotes,
+    saveNotesWithMeta,
     getMeta,
     saveMeta,
     deleteAllForUrl,

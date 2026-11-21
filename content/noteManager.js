@@ -15,14 +15,43 @@ var NoteManager = (globalThis.NoteManager && globalThis.NoteManager.__tabstick) 
   let spawnCounter = 0;
   let isHidden     = false;
   let isGlassMode  = false;
+  let pendingWrites = 0;
+  let latestWritePromise = Promise.resolve();
+  let hasUnsavedChanges = false;
+
+  function _trackWrite(promise) {
+    pendingWrites++;
+    const tracked = Promise.resolve(promise)
+      .catch(_handleSaveError)
+      .finally(() => {
+        pendingWrites--;
+      });
+    latestWritePromise = Promise.allSettled([latestWritePromise, tracked]);
+    return tracked;
+  }
+
+  function hasPendingWrites() {
+    return pendingWrites > 0;
+  }
+
+  async function whenWritesSettled() {
+    while (pendingWrites > 0) {
+      await latestWritePromise;
+    }
+  }
 
   // ── Init ──
   function init(notesArray, urlMeta, url, glassMode) {
     currentUrl = url;
     meta = urlMeta || { hidden: false, noteCount: 0 };
 
+    clearTimeout(saveTimer);
+    saveTimer = null;
+    hasUnsavedChanges = false;
+
     // Remove any tracked or orphaned hosts from prior injection / reload
     for (const [, host] of domNodes) {
+      if (typeof host._cleanup === 'function') host._cleanup();
       host.remove();
     }
     document.querySelectorAll('tabstick-note.ts-host, div.ts-host').forEach(el => el.remove());
@@ -80,9 +109,7 @@ var NoteManager = (globalThis.NoteManager && globalThis.NoteManager.__tabstick) 
     notes.set(note.id, note);
     renderNote(note, true);
 
-    Storage.saveNotes(currentUrl, Array.from(notes.values())).catch(_handleSaveError);
-    meta.noteCount = notes.size;
-    Storage.saveMeta(currentUrl, meta).catch(_handleSaveError);
+    _saveNow();
     return note;
   }
 
@@ -135,8 +162,15 @@ var NoteManager = (globalThis.NoteManager && globalThis.NoteManager.__tabstick) 
       NoteRenderer.applyGlassMode(host, true);
     }
 
+    const closeBtn = shadow.querySelector('.ts-close-btn');
+
     // Bring to front on mousedown
-    host.addEventListener('mousedown', () => { bringToFront(note.id); });
+    host.addEventListener('mousedown', (e) => {
+      if (closeBtn && typeof e.composedPath === 'function' && e.composedPath().includes(closeBtn)) {
+        return;
+      }
+      bringToFront(note.id);
+    });
 
     // Drag & Resize
     DragHandler.attachDrag(host, shadow, note, (c) => updateNote(note.id, c));
@@ -189,6 +223,7 @@ var NoteManager = (globalThis.NoteManager && globalThis.NoteManager.__tabstick) 
         note.updatedAt = Date.now();
         updateHeaderTitle();
         _updateTimestamps();
+        hasUnsavedChanges = true;
         clearTimeout(inputDebounce);
         inputDebounce = setTimeout(() => { debouncedSave(); _showSavedIndicator(shadow); }, 500);
       });
@@ -206,6 +241,7 @@ var NoteManager = (globalThis.NoteManager && globalThis.NoteManager.__tabstick) 
         note.updatedAt = Date.now();
         updateHeaderTitle();
         _updateTimestamps();
+        hasUnsavedChanges = true;
         clearTimeout(inputDebounce);
         inputDebounce = setTimeout(() => { debouncedSave(); _showSavedIndicator(shadow); }, 500);
       });
@@ -308,6 +344,7 @@ var NoteManager = (globalThis.NoteManager && globalThis.NoteManager.__tabstick) 
       if (textarea) textarea.value = note.content;
       updateHeaderTitle();
       _updateTimestamps();
+      hasUnsavedChanges = true;
       clearTimeout(inputDebounce);
       inputDebounce = setTimeout(() => { debouncedSave(); _showSavedIndicator(shadow); }, 500);
     }
@@ -393,13 +430,17 @@ var NoteManager = (globalThis.NoteManager && globalThis.NoteManager.__tabstick) 
     }
 
     // ── Close ──
-    const closeBtn = shadow.querySelector('.ts-close-btn');
     if (closeBtn) {
       closeBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         deleteNote(note.id);
       });
     }
+
+    host._cleanup = () => {
+      clearTimeout(inputDebounce);
+      inputDebounce = null;
+    };
 
     // Expose targeted sync helpers for external updates (cross-tab / popup / sidepanel / dashboard)
     host._syncRender = (opts = {}) => {
@@ -475,32 +516,39 @@ var NoteManager = (globalThis.NoteManager && globalThis.NoteManager.__tabstick) 
     notes.delete(id);
     domNodes.delete(id);
 
+    if (typeof host._cleanup === 'function') host._cleanup();
+    host.style.pointerEvents = 'none';
+
     if (!reducedMotion) {
       const anim = host.animate([
         { opacity: 1, transform: `rotate(${note.rotation}deg) scale(1.0)` },
         { opacity: 0, transform: `rotate(${note.rotation}deg) scale(0.88) translateY(-8px)` },
       ], { duration: 200, easing: 'ease-in', fill: 'forwards' });
       anim.onfinish = () => host.remove();
+      anim.oncancel = () => host.remove();
     } else {
       host.remove();
     }
 
     if (skipSave) return;
-    if (skipUndo) {
-      _saveNow();
-    } else {
-      ToastManager.show(snapshot, undoDelete, confirmDelete);
+    const deletedUrl = currentUrl;
+    _saveNow();
+    if (!skipUndo) {
+      ToastManager.show(snapshot, (noteSnapshot) => undoDelete(noteSnapshot, deletedUrl), confirmDelete);
     }
   }
 
-  function undoDelete(noteSnapshot) {
+  function undoDelete(noteSnapshot, expectedUrl) {
+    if (expectedUrl && expectedUrl !== currentUrl) return;
+    if (notes.has(noteSnapshot.id)) return;
+    if (noteSnapshot.zIndex > maxZIndex) maxZIndex = noteSnapshot.zIndex;
     notes.set(noteSnapshot.id, noteSnapshot);
     renderNote(noteSnapshot, false);
     _saveNow();
   }
 
   function confirmDelete() {
-    _saveNow();
+    // Deletion is persisted immediately in deleteNote.
   }
 
   function bringToFront(id) {
@@ -518,7 +566,7 @@ var NoteManager = (globalThis.NoteManager && globalThis.NoteManager.__tabstick) 
     meta.hidden = Boolean(hidden);
     isHidden = Boolean(hidden);
     _applyVisibilityToAll(isHidden);
-    Storage.saveMeta(currentUrl, meta).catch(_handleSaveError);
+    _trackWrite(Storage.saveMeta(currentUrl, { ...meta, noteCount: notes.size }));
   }
 
   function toggleVisibility() {
@@ -528,8 +576,11 @@ var NoteManager = (globalThis.NoteManager && globalThis.NoteManager.__tabstick) 
   function clearAll() {
     clearTimeout(saveTimer);
     saveTimer = null;
+    hasUnsavedChanges = false;
     ToastManager.dismiss(false);
     for (const [id, host] of domNodes) {
+      if (typeof host._cleanup === 'function') host._cleanup();
+      host.style.pointerEvents = 'none';
       const note = notes.get(id);
       if (!reducedMotion && note) {
         const anim = host.animate([
@@ -537,6 +588,7 @@ var NoteManager = (globalThis.NoteManager && globalThis.NoteManager.__tabstick) 
           { opacity: 0, transform: `rotate(${note.rotation}deg) scale(0.88) translateY(-8px)` },
         ], { duration: 200, easing: 'ease-in', fill: 'forwards' });
         anim.onfinish = () => host.remove();
+        anim.oncancel = () => host.remove();
       } else {
         host.remove();
       }
@@ -544,11 +596,11 @@ var NoteManager = (globalThis.NoteManager && globalThis.NoteManager.__tabstick) 
     notes.clear();
     domNodes.clear();
     meta.noteCount = 0;
-    Storage.deleteAllForUrl(currentUrl).catch(_handleSaveError);
+    _trackWrite(Storage.deleteAllForUrl(currentUrl));
   }
 
   function flushPendingSave() {
-    if (saveTimer) {
+    if (saveTimer || hasUnsavedChanges) {
       clearTimeout(saveTimer);
       saveTimer = null;
       _saveNow();
@@ -686,7 +738,10 @@ var NoteManager = (globalThis.NoteManager && globalThis.NoteManager.__tabstick) 
   async function handleUrlChange(newUrl) {
     flushPendingSave();
     ToastManager.dismiss(true);
-    for (const [, host] of domNodes) host.remove();
+    for (const [, host] of domNodes) {
+      if (typeof host._cleanup === 'function') host._cleanup();
+      host.remove();
+    }
     notes.clear();
     domNodes.clear();
     currentUrl = newUrl;
@@ -718,12 +773,16 @@ var NoteManager = (globalThis.NoteManager && globalThis.NoteManager.__tabstick) 
   }
 
   function _saveNow() {
-    const notesArray = Array.from(notes.values());
-    Storage.saveNotes(currentUrl, notesArray).catch(_handleSaveError);
-    meta.noteCount = notesArray.length;
-    if (notesArray.length > 0) {
-      Storage.saveMeta(currentUrl, meta).catch(_handleSaveError);
+    if (saveTimer) {
+      clearTimeout(saveTimer);
+      saveTimer = null;
     }
+    hasUnsavedChanges = false;
+    const url = currentUrl;
+    const notesArray = Array.from(notes.values()).map(n => ({ ...n }));
+    meta.noteCount = notesArray.length;
+    const metaSnapshot = notesArray.length > 0 ? { ...meta } : null;
+    _trackWrite(Storage.saveNotesWithMeta(url, notesArray, metaSnapshot));
   }
 
   function _handleSaveError(err) {
@@ -855,6 +914,8 @@ var NoteManager = (globalThis.NoteManager && globalThis.NoteManager.__tabstick) 
     handleUrlChange,
     setGlassMode,
     debouncedSave,
+    hasPendingWrites,
+    whenWritesSettled,
     get notes() { return notes; },
     get currentUrl() { return currentUrl; },
     get meta() { return meta; },
