@@ -1,102 +1,166 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=320">
-  <title>TabStick — Sticky Notes</title>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&display=swap">
-  <link rel="stylesheet" href="popup.css">
-</head>
-<body>
-  <!-- Header -->
-  <div class="ts-popup-header">
-    <div class="ts-popup-header-left">
-      <img src="../assets/icons/icon48.png" alt="Logo" class="ts-popup-logo">
-      <span class="ts-popup-title">TabStick</span>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=320" />
+    <title>TabStick — Sticky Notes</title>
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&display=swap"
+    />
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <!-- Header -->
+    <div class="ts-popup-header">
+      <div class="ts-popup-header-left">
+        <img
+          src="../assets/icons/icon48.png"
+          alt="Logo"
+          class="ts-popup-logo"
+        />
+        <span class="ts-popup-title">TabStick</span>
+      </div>
+      <span class="ts-popup-version" id="ts-version"></span>
     </div>
-    <span class="ts-popup-version" id="ts-version"></span>
-  </div>
 
-  <!-- Search -->
-  <div class="ts-popup-section ts-search-section">
-    <div class="ts-search-container">
-      <span class="ts-search-icon">🔍</span>
-      <input type="text" id="ts-search-input" class="ts-search-input" placeholder="Search all notes...">
+    <!-- Search -->
+    <div class="ts-popup-section ts-search-section">
+      <div class="ts-search-container">
+        <span class="ts-search-icon">🔍</span>
+        <input
+          type="text"
+          id="ts-search-input"
+          class="ts-search-input"
+          placeholder="Search all notes..."
+        />
+      </div>
+      <div
+        id="ts-search-results"
+        class="ts-search-results"
+        style="display: none"
+      ></div>
     </div>
-    <div id="ts-search-results" class="ts-search-results" style="display: none;"></div>
-  </div>
 
-  <!-- Current page section -->
-  <div class="ts-popup-section" id="ts-page-section">
-    <div class="ts-popup-url" id="ts-url">Loading…</div>
-    <div class="ts-popup-count" id="ts-count"></div>
-  </div>
-
-  <!-- Inaccessible warning -->
-  <div class="ts-popup-inaccessible" id="ts-inaccessible" style="display: none;">
-    ⚠ Notes aren't available on this page
-  </div>
-
-  <!-- Primary actions -->
-  <div class="ts-popup-section ts-popup-actions" id="ts-actions">
-    <button class="ts-btn ts-btn-primary" id="ts-add-note">+ Add Note</button>
-    <button class="ts-btn ts-btn-outlined" id="ts-toggle-visibility">Hide Notes</button>
-    <button class="ts-btn ts-btn-danger" id="ts-clear-all">Clear All</button>
-    <div class="ts-confirm-inline" id="ts-clear-confirm" style="display: none;">
-      <span class="ts-confirm-text">Clear all notes?</span>
-      <button class="ts-confirm-btn ts-confirm-cancel" id="ts-clear-cancel">Cancel</button>
-      <button class="ts-confirm-btn ts-confirm-delete" id="ts-clear-confirm-btn">Clear</button>
+    <!-- Current page section -->
+    <div class="ts-popup-section" id="ts-page-section">
+      <div class="ts-popup-url" id="ts-url">Loading…</div>
+      <div class="ts-popup-count" id="ts-count"></div>
     </div>
-  </div>
 
-  <!-- Error / status messages -->
-  <div class="ts-popup-error" id="ts-error" style="display: none;"></div>
-  <div class="ts-popup-status" id="ts-status" style="display: none;" role="status" aria-live="polite"></div>
-
-  <!-- Note list -->
-  <div class="ts-popup-section" id="ts-note-list-section" style="display: none;">
-    <div class="ts-popup-list-header">On this page:</div>
-    <div class="ts-popup-note-list" id="ts-note-list"></div>
-  </div>
-
-  <!-- Settings -->
-  <div class="ts-popup-section ts-settings">
-    <label class="ts-setting-item">
-      <input type="checkbox" id="ts-toggle-glass">
-      <span>Liquid Glass Effect</span>
-    </label>
-    <label class="ts-setting-item">
-      <input type="checkbox" id="ts-toggle-sync">
-      <span>Sync across devices</span>
-    </label>
-    <div id="ts-sync-warning" class="ts-sync-warning" style="display: none;">
-      ⚠️ Sync has a 102KB limit. Large note collections may not sync fully.
+    <!-- Inaccessible warning -->
+    <div
+      class="ts-popup-inaccessible"
+      id="ts-inaccessible"
+      style="display: none"
+    >
+      ⚠ Notes aren't available on this page
     </div>
-  </div>
 
-  <!-- Export / Import -->
-  <div class="ts-popup-section ts-data-actions">
-    <div class="ts-export-wrap">
-      <button id="ts-btn-export" class="ts-btn ts-btn-outlined ts-btn-sm">Export ▾</button>
-      <div id="ts-export-dropdown" class="ts-export-dropdown" style="display: none;">
-        <button id="ts-export-json" class="ts-export-option">Export as JSON</button>
-        <button id="ts-export-md" class="ts-export-option">Export as Markdown</button>
+    <!-- Primary actions -->
+    <div class="ts-popup-section ts-popup-actions" id="ts-actions">
+      <button class="ts-btn ts-btn-primary" id="ts-add-note">+ Add Note</button>
+      <button class="ts-btn ts-btn-outlined" id="ts-toggle-visibility">
+        Hide Notes
+      </button>
+      <button class="ts-btn ts-btn-danger" id="ts-clear-all">Clear All</button>
+      <div
+        class="ts-confirm-inline"
+        id="ts-clear-confirm"
+        style="display: none"
+      >
+        <span class="ts-confirm-text">Clear all notes?</span>
+        <button class="ts-confirm-btn ts-confirm-cancel" id="ts-clear-cancel">
+          Cancel
+        </button>
+        <button
+          class="ts-confirm-btn ts-confirm-delete"
+          id="ts-clear-confirm-btn"
+        >
+          Clear
+        </button>
       </div>
     </div>
-    <button id="ts-btn-import" class="ts-btn ts-btn-outlined ts-btn-sm">Import Data</button>
-    <input type="file" id="ts-file-import" accept=".json" style="display: none;">
-  </div>
 
-  <!-- Explore & Dashboard -->
-  <div class="ts-popup-section ts-nav-actions">
-    <button id="ts-explore" class="ts-btn ts-btn-outlined ts-btn-sm">Explore Notes</button>
-    <button id="ts-dashboard" class="ts-btn ts-btn-outlined ts-btn-sm">📊 Dashboard</button>
-  </div>
+    <!-- Error / status messages -->
+    <div class="ts-popup-error" id="ts-error" style="display: none"></div>
+    <div
+      class="ts-popup-status"
+      id="ts-status"
+      style="display: none"
+      role="status"
+      aria-live="polite"
+    ></div>
 
-  <script src="../utils/colorThemes.js"></script>
-  <script src="../utils/urlUtils.js"></script>
-  <script src="../utils/idUtils.js"></script>
-  <script src="../utils/storage.js"></script>
-  <script src="popup.js"></script>
-</body>
+    <!-- Note list -->
+    <div
+      class="ts-popup-section"
+      id="ts-note-list-section"
+      style="display: none"
+    >
+      <div class="ts-popup-list-header">On this page:</div>
+      <div class="ts-popup-note-list" id="ts-note-list"></div>
+    </div>
+
+    <!-- Settings -->
+    <div class="ts-popup-section ts-settings">
+      <label class="ts-setting-item">
+        <input type="checkbox" id="ts-toggle-glass" />
+        <span>Liquid Glass Effect</span>
+      </label>
+      <!-- <label class="ts-setting-item">
+      <input type="checkbox" id="ts-toggle-sync">
+      <span>Sync across devices</span> Later
+    </label> -->
+      <div id="ts-sync-warning" class="ts-sync-warning" style="display: none">
+        ⚠️ Sync has a 102KB limit. Large note collections may not sync fully.
+      </div>
+    </div>
+
+    <!-- Export / Import -->
+    <div class="ts-popup-section ts-data-actions">
+      <div class="ts-export-wrap">
+        <button id="ts-btn-export" class="ts-btn ts-btn-outlined ts-btn-sm">
+          Export ▾
+        </button>
+        <div
+          id="ts-export-dropdown"
+          class="ts-export-dropdown"
+          style="display: none"
+        >
+          <button id="ts-export-json" class="ts-export-option">
+            Export as JSON
+          </button>
+          <button id="ts-export-md" class="ts-export-option">
+            Export as Markdown
+          </button>
+        </div>
+      </div>
+      <button id="ts-btn-import" class="ts-btn ts-btn-outlined ts-btn-sm">
+        Import Data
+      </button>
+      <input
+        type="file"
+        id="ts-file-import"
+        accept=".json"
+        style="display: none"
+      />
+    </div>
+
+    <!-- Explore & Dashboard -->
+    <div class="ts-popup-section ts-nav-actions">
+      <button id="ts-explore" class="ts-btn ts-btn-outlined ts-btn-sm">
+        Explore Notes
+      </button>
+      <button id="ts-dashboard" class="ts-btn ts-btn-outlined ts-btn-sm">
+        📊 Dashboard
+      </button>
+    </div>
+
+    <script src="../utils/colorThemes.js"></script>
+    <script src="../utils/urlUtils.js"></script>
+    <script src="../utils/idUtils.js"></script>
+    <script src="../utils/storage.js"></script>
+    <script src="popup.js"></script>
+  </body>
 </html>
